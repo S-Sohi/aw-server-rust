@@ -80,7 +80,8 @@ pub enum Command {
     SetKeyValue(String, String),
     DeleteKeyValue(String),
     Close(),
-    GetUser(String)
+    GetUser(String),
+    AddUser(User),
 }
 
 fn _unwrap_response(
@@ -293,10 +294,14 @@ impl DatastoreWorker {
                 Ok(()) => Ok(Response::Empty()),
                 Err(e) => Err(e),
             },
-            Command::GetUser(username) => match ds.get_user(tx, username) {
-                Ok(()) => Ok(Response::Empty()),
+            Command::GetUser(email) => match ds.get_user(tx, email) {
+                Ok((user)) => Ok(Response::User((user))),
                 Err(e) => Err(e),
-            }
+            },
+            Command::AddUser(user) => match ds.signup(tx, user) {
+                Ok((result)) => Ok(Response::User(result)),
+                Err(e) => Err(e),
+            },
             Command::Close() => {
                 self.quit = true;
                 Ok(Response::Empty())
@@ -535,8 +540,8 @@ impl Datastore {
         }
     }
 
-    pub fn get_user(&self, username:String) -> Result<User, DatastoreError> {
-        let cmd = Command::GetUser(username);
+    pub fn get_user(&self, email: String) -> Result<User, DatastoreError> {
+        let cmd = Command::GetUser(email);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -547,4 +552,15 @@ impl Datastore {
         }
     }
 
+    pub fn add_user(&self, user: User) -> Result<User, DatastoreError> {
+        let cmd = Command::AddUser(user);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::User(user) => Ok(user),
+                _ => Err(DatastoreError::NoUser()),
+            },
+            Err(e) => Err(e),
+        }
+    }
 }

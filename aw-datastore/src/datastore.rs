@@ -52,10 +52,7 @@ fn _create_tables(conn: &Connection, version: i32) -> bool {
     if version < 4 {
         _migrate_v3_to_v4(conn);
     }
-    if version == 4{
-        _migrate_new_version(conn)
-    }
-
+    _migrate_new_version(conn);
     first_init
 }
 
@@ -172,19 +169,45 @@ fn _migrate_v3_to_v4(conn: &Connection) {
         .expect("Failed to update database version!");
 }
 
-fn _migrate_new_version(conn:&Connection){
+fn _migrate_new_version(conn: &Connection) {
     conn.execute(
         "
-        CREATE TABLE IF NOT EXISTS User (
+        CREATE TABLE IF NOT EXISTS Users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role INTEGER NOT NULL,
             name TEXT NOT NULL,
             lastname TEXT NOT NULL,
-            username TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL
         )",
         &[] as &[&dyn ToSql],
     )
     .expect("Failed to create User table");
+
+    conn.execute(
+        "
+    CREATE TABLE IF NOT EXISTS Groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        ownerId INTEGER NOT NULL,
+        FOREIGN KEY (ownerId) REFERENCES Users(id)
+    )",
+        &[] as &[&dyn ToSql],
+    )
+    .expect("Failed to create Groups table");
+
+    conn.execute(
+        "
+        CREATE TABLE IF NOT EXISTS GroupsUsers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            groupId INTEGER NOT NULL,
+            userId INTEGER NOT NULL,
+            FOREIGN KEY (groupId) REFERENCES Groups(id),
+            FOREIGN KEY (userId) REFERENCES Users(id)
+        )",
+        &[] as &[&dyn ToSql],
+    )
+    .expect("Failed to create GroupUsers table");
 }
 pub struct DatastoreInstance {
     buckets_cache: HashMap<String, Bucket>,
@@ -968,11 +991,8 @@ impl DatastoreInstance {
         }
     }
 
-    pub fn get_user(&self, conn: &Connection, username:String) -> Result<(), DatastoreError> {
-        let query = format!("SELECT * FROM User WHERE username = '{username}'");
-        println!("{query}");
-        let mut stmt = match conn.prepare(query.as_str())
-        {
+    pub fn get_user(&self, conn: &Connection, email: String) -> Result<User, DatastoreError> {
+        let mut stmt = match conn.prepare("SELECT * FROM Users WHERE email = ?1 LIMIT 1") {
             Ok(stmt) => stmt,
             Err(err) => {
                 return Err(DatastoreError::InternalError(format!(
@@ -980,7 +1000,28 @@ impl DatastoreInstance {
                 )))
             }
         };
-        Ok(())
-        
+        let user = match stmt.query_row([email.to_string()], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                email: row.get(2)?,
+                name: row.get(3)?,
+                lastname: row.get(4)?,
+                password: row.get(5)?,
+            })
+        }) {
+            Ok(rows) => rows,
+            Err(err) => return Err(DatastoreError::NoUser()),
+        };
+        Ok(user)
+    }
+
+    pub fn signup(&self, conn: &Connection, user: User) -> Result<User, DatastoreError> {
+        conn.execute(
+            "INSERT INTO Users (email, name, lastname, password , role) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![user.email, user.name, user.lastname, user.password, 1],
+        )
+        .expect("Could not insert");
+        Ok(user)
     }
 }

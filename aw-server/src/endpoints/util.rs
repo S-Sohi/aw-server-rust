@@ -98,11 +98,8 @@ impl From<DatastoreError> for HttpErrorJson {
             DatastoreError::OldDbVersion(msg) => {
                 HttpErrorJson::new(Status::InternalServerError, msg)
             }
-            DatastoreError::NoUser()=>{
-                HttpErrorJson::new(
-                    Status::BadRequest,
-                    "No User found".to_string(),
-                )
+            DatastoreError::NoUser() => {
+                HttpErrorJson::new(Status::BadRequest, "No User found".to_string())
             }
         }
     }

@@ -53,6 +53,7 @@ mod hostcheck;
 mod import;
 mod query;
 mod settings;
+mod team;
 mod user;
 
 pub use util::HttpErrorJson;
@@ -190,7 +191,11 @@ pub fn build_rocket(server_state: ServerState, config: AWConfig) -> rocket::Rock
                 settings::settings_get,
             ],
         )
-        .mount("/api/user", routes![user::login, user::signup])
+        .mount(
+            "/api/user",
+            routes![user::login, user::signup, user::getUser],
+        )
+        .mount("/api/teams", routes![team::getTeams, team::addTeam])
         .mount("/", rocket_cors::catch_all_options_routes());
 
     // for each custom static directory, mount it at the given name

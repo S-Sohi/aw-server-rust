@@ -1,16 +1,19 @@
 use std::collections::HashMap;
 
+use aw_models::TeamRequestModel;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
 
 use rusqlite::Connection;
 
+use rusqlite::MappedRows;
 use serde_json::value::Value;
 
 use aw_models::Bucket;
 use aw_models::BucketMetadata;
 use aw_models::Event;
+use aw_models::Team;
 use aw_models::User;
 
 use rusqlite::params;
@@ -186,28 +189,29 @@ fn _migrate_new_version(conn: &Connection) {
 
     conn.execute(
         "
-    CREATE TABLE IF NOT EXISTS Groups (
+    CREATE TABLE IF NOT EXISTS Teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
+        description TEXT,
         ownerId INTEGER NOT NULL,
         FOREIGN KEY (ownerId) REFERENCES Users(id)
     )",
         &[] as &[&dyn ToSql],
     )
-    .expect("Failed to create Groups table");
+    .expect("Failed to create Teams table");
 
     conn.execute(
         "
-        CREATE TABLE IF NOT EXISTS GroupsUsers (
+        CREATE TABLE IF NOT EXISTS TeamsUsers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            groupId INTEGER NOT NULL,
+            teamId INTEGER NOT NULL,
             userId INTEGER NOT NULL,
-            FOREIGN KEY (groupId) REFERENCES Groups(id),
+            FOREIGN KEY (teamId) REFERENCES Teams(id),
             FOREIGN KEY (userId) REFERENCES Users(id)
         )",
         &[] as &[&dyn ToSql],
     )
-    .expect("Failed to create GroupUsers table");
+    .expect("Failed to create TeamsUsers table");
 }
 pub struct DatastoreInstance {
     buckets_cache: HashMap<String, Bucket>,
@@ -991,7 +995,11 @@ impl DatastoreInstance {
         }
     }
 
-    pub fn get_user(&self, conn: &Connection, email: String) -> Result<User, DatastoreError> {
+    pub fn get_user_by_email(
+        &self,
+        conn: &Connection,
+        email: String,
+    ) -> Result<User, DatastoreError> {
         let mut stmt = match conn.prepare("SELECT * FROM Users WHERE email = ?1 LIMIT 1") {
             Ok(stmt) => stmt,
             Err(err) => {
@@ -1016,6 +1024,31 @@ impl DatastoreInstance {
         Ok(user)
     }
 
+    pub fn get_user(&self, conn: &Connection, userId: i32) -> Result<User, DatastoreError> {
+        let mut stmt = match conn.prepare("SELECT * FROM Users WHERE id = ?1 LIMIT 1") {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let user = match stmt.query_row([userId], |row| {
+            Ok(User {
+                id: row.get(0)?,
+                role: row.get(1)?,
+                email: row.get(2)?,
+                name: row.get(3)?,
+                lastname: row.get(4)?,
+                password: row.get(5)?,
+            })
+        }) {
+            Ok(rows) => rows,
+            Err(err) => return Err(DatastoreError::NoUser()),
+        };
+        Ok(user)
+    }
+
     pub fn signup(&self, conn: &Connection, user: User) -> Result<User, DatastoreError> {
         conn.execute(
             "INSERT INTO Users (email, name, lastname, password , role) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -1023,5 +1056,89 @@ impl DatastoreInstance {
         )
         .expect("Could not insert");
         Ok(user)
+    }
+
+    pub fn get_teams(&self, conn: &Connection, ownerId: i32) -> Result<Vec<Team>, DatastoreError> {
+        let mut stmt = match conn.prepare("SELECT * FROM Teams WHERE ownerId = ?1") {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let rows = match stmt.query_map(params![ownerId], |row| {
+            Ok(Team {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                ownerId: row.get(3)?,
+            })
+        }) {
+            Ok(teams) => teams,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let mut teams: Vec<Team> = Vec::new();
+        for team in rows {
+            match team {
+                Ok(t) => teams.push(t),
+                Err(err) => warn!("Bad data"),
+            }
+        }
+        Ok(teams)
+    }
+    pub fn add_team(
+        &self,
+        conn: &Connection,
+        team: TeamRequestModel,
+        ownerId: i32,
+    ) -> Result<Team, DatastoreError> {
+        let mut stmt = match conn
+            .prepare("INSERT INTO Teams (name,description,ownerId) VALUES (?1, ?2, ?3)")
+        {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let team = match stmt.query_row([team.name, team.description, ownerId.to_string()], |row| {
+            Ok(Team {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                ownerId: row.get(3)?,
+            })
+        }) {
+            Ok(rows) => rows,
+            Err(err) => return Err(DatastoreError::NoUser()),
+        };
+        Ok(team)
+    }
+
+    pub fn get_team_members_count(
+        &self,
+        conn: &Connection,
+        team_id: i32,
+    ) -> Result<i64, DatastoreError> {
+        let mut stmt = match conn.prepare("SELECT COUNT(*) FROM TeamsUsers WHERE teamId = ?1") {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+
+        let count: i64 = match stmt.query_row([team_id], |row| Ok(row.get(0)?)) {
+            Ok(i) => i,
+            Err(err) => return Err(DatastoreError::NoUser()),
+        };
+        Ok(count)
     }
 }

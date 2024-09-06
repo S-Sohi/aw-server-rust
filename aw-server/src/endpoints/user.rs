@@ -5,7 +5,7 @@ use rocket::request::{self, FromRequest, Request};
 use rocket::response::status::BadRequest;
 
 use crate::endpoints::{HttpErrorJson, ServerState};
-use aw_models::User;
+use aw_models::{PublicUser, User};
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -25,6 +25,7 @@ pub struct SignupModel<'r> {
     email: &'r str,
     name: &'r str,
     lastname: &'r str,
+    username: &'r str,
 }
 #[derive(Deserialize, Clone)]
 pub struct Token(String);
@@ -91,6 +92,7 @@ pub fn signup(
     let email = input.email.to_string();
     let name = input.name.to_string();
     let lastname = input.lastname.to_string();
+    let username = input.username.to_string();
     if (email.is_empty() || password.is_empty()) {
         let err_msg = format!("No user");
         return Err(HttpErrorJson::new(Status::BadRequest, err_msg));
@@ -98,6 +100,7 @@ pub fn signup(
     let user = User {
         id: 0,
         email: email,
+        username: username,
         password: password,
         name: name,
         lastname: lastname,
@@ -122,7 +125,10 @@ pub fn signup(
 }
 
 #[get("/getuser")]
-pub fn getUser(state: &State<ServerState>, token: Token) -> Result<Json<User>, HttpErrorJson> {
+pub fn getUser(
+    state: &State<ServerState>,
+    token: Token,
+) -> Result<Json<PublicUser>, HttpErrorJson> {
     let tokenString = token.clone().0;
     let userId = match validate_jwt(&tokenString) {
         Ok(userId) => userId,
@@ -136,6 +142,27 @@ pub fn getUser(state: &State<ServerState>, token: Token) -> Result<Json<User>, H
         Err(_) => Err(HttpErrorJson::new(
             Status::BadRequest,
             "Email is used".to_string(),
+        )),
+    }
+}
+
+#[get("/users")]
+pub fn getAllUsers(
+    state: &State<ServerState>,
+    token: Token,
+) -> Result<Json<Vec<PublicUser>>, HttpErrorJson> {
+    let tokenString = token.clone().0;
+    let userId = match validate_jwt(&tokenString) {
+        Ok(userId) => userId,
+        Err(_) => todo!(),
+    };
+    let datastore = endpoints_get_lock!(state.datastore);
+
+    match datastore.get_all_users() {
+        Ok(users) => Ok(Json(users)),
+        Err(_) => Err(HttpErrorJson::new(
+            Status::BadRequest,
+            "An error ocurred".to_string(),
         )),
     }
 }

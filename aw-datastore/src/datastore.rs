@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use aw_models::Member;
+use aw_models::PublicUser;
 use aw_models::TeamRequestModel;
 use chrono::DateTime;
 use chrono::Duration;
@@ -34,7 +36,7 @@ fn _get_db_version(conn: &Connection) -> i32 {
  * 3: see: https://github.com/ActivityWatch/aw-server-rust/pull/52
  * 4: Added 'key_value' table for storing key - value pairs
  */
-static NEWEST_DB_VERSION: i32 = 4;
+static NEWEST_DB_VERSION: i32 = 5;
 
 fn _create_tables(conn: &Connection, version: i32) -> bool {
     let mut first_init = false;
@@ -55,7 +57,9 @@ fn _create_tables(conn: &Connection, version: i32) -> bool {
     if version < 4 {
         _migrate_v3_to_v4(conn);
     }
-    _migrate_new_version(conn);
+    if version < 5 {
+        _migrate_new_version(conn);
+    }
     first_init
 }
 
@@ -177,15 +181,23 @@ fn _migrate_new_version(conn: &Connection) {
         "
         CREATE TABLE IF NOT EXISTS Users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role INTEGER NOT NULL,
+            username TEXT UNIQUE NOT NULL,
             name TEXT NOT NULL,
             lastname TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL,
+            role INTEGER NOT NULL,
             password TEXT NOT NULL
         )",
         &[] as &[&dyn ToSql],
     )
     .expect("Failed to create User table");
+
+    // Should force password change after first login
+    conn.execute(
+    "INSERT INTO Users (username, email, name, lastname, password , role) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    params!["admin", "admin@admin.com","admin", "admin", "admin", "1"] as &[&dyn ToSql],
+    )
+    .expect("Failed to insert Admin user");
 
     conn.execute(
         "
@@ -212,6 +224,9 @@ fn _migrate_new_version(conn: &Connection) {
         &[] as &[&dyn ToSql],
     )
     .expect("Failed to create TeamsUsers table");
+
+    conn.pragma_update(None, "user_version", 5)
+        .expect("Failed to update database version!");
 }
 pub struct DatastoreInstance {
     buckets_cache: HashMap<String, Bucket>,
@@ -1000,7 +1015,9 @@ impl DatastoreInstance {
         conn: &Connection,
         email: String,
     ) -> Result<User, DatastoreError> {
-        let mut stmt = match conn.prepare("SELECT * FROM Users WHERE email = ?1 LIMIT 1") {
+        let mut stmt = match conn.prepare(
+            "SELECT id, username, email, name, lastname, role, password FROM Users WHERE email = ?1 LIMIT 1",
+        ) {
             Ok(stmt) => stmt,
             Err(err) => {
                 return Err(DatastoreError::InternalError(format!(
@@ -1011,11 +1028,12 @@ impl DatastoreInstance {
         let user = match stmt.query_row([email.to_string()], |row| {
             Ok(User {
                 id: row.get(0)?,
-                role: row.get(1)?,
+                username: row.get(1)?,
                 email: row.get(2)?,
                 name: row.get(3)?,
                 lastname: row.get(4)?,
-                password: row.get(5)?,
+                role: row.get(5)?,
+                password: row.get(6)?,
             })
         }) {
             Ok(rows) => rows,
@@ -1024,8 +1042,10 @@ impl DatastoreInstance {
         Ok(user)
     }
 
-    pub fn get_user(&self, conn: &Connection, userId: i32) -> Result<User, DatastoreError> {
-        let mut stmt = match conn.prepare("SELECT * FROM Users WHERE id = ?1 LIMIT 1") {
+    pub fn get_user(&self, conn: &Connection, userId: i32) -> Result<PublicUser, DatastoreError> {
+        let mut stmt = match conn
+            .prepare("SELECT id, email, name, lastname, role FROM Users WHERE id = ?1 LIMIT 1")
+        {
             Ok(stmt) => stmt,
             Err(err) => {
                 return Err(DatastoreError::InternalError(format!(
@@ -1034,13 +1054,12 @@ impl DatastoreInstance {
             }
         };
         let user = match stmt.query_row([userId], |row| {
-            Ok(User {
+            Ok(PublicUser {
                 id: row.get(0)?,
-                role: row.get(1)?,
-                email: row.get(2)?,
-                name: row.get(3)?,
-                lastname: row.get(4)?,
-                password: row.get(5)?,
+                email: row.get(1)?,
+                name: row.get(2)?,
+                lastname: row.get(3)?,
+                role: row.get(4)?,
             })
         }) {
             Ok(rows) => rows,
@@ -1049,13 +1068,19 @@ impl DatastoreInstance {
         Ok(user)
     }
 
-    pub fn signup(&self, conn: &Connection, user: User) -> Result<User, DatastoreError> {
+    pub fn signup(&self, conn: &Connection, user: User) -> Result<PublicUser, DatastoreError> {
         conn.execute(
-            "INSERT INTO Users (email, name, lastname, password , role) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![user.email, user.name, user.lastname, user.password, 1],
+            "INSERT INTO Users (email, name, lastname, password, role, username) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![user.email, user.name, user.lastname, user.password, 2, user.username],
         )
         .expect("Could not insert");
-        Ok(user)
+        Ok(PublicUser {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            lastname: user.lastname,
+            role: user.role,
+        })
     }
 
     pub fn get_teams(&self, conn: &Connection, ownerId: i32) -> Result<Vec<Team>, DatastoreError> {
@@ -1140,5 +1165,156 @@ impl DatastoreInstance {
             Err(err) => return Err(DatastoreError::NoUser()),
         };
         Ok(count)
+    }
+
+    pub fn get_team(&self, conn: &Connection, team_id: i32) -> Result<Team, DatastoreError> {
+        let mut stmt = match conn.prepare("SELECT * FROM Teams WHERE id = ?1") {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+
+        let team: Team = match stmt.query_row([team_id], |row| {
+            Ok(Team {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                ownerId: row.get(3)?,
+            })
+        }) {
+            Ok(team) => team,
+            Err(err) => return Err(DatastoreError::NoUser()),
+        };
+        Ok(team)
+    }
+    pub fn get_all_users(&self, conn: &Connection) -> Result<Vec<PublicUser>, DatastoreError> {
+        let mut stmt = match conn
+            .prepare("SELECT id, name, lastname, email, role FROM Users WHERE role = 2")
+        {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let rows = match stmt.query_map(params![], |row| {
+            Ok(PublicUser {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                lastname: row.get(2)?,
+                email: row.get(3)?,
+                role: row.get(4)?,
+            })
+        }) {
+            Ok(users) => users,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let mut users: Vec<PublicUser> = Vec::new();
+        for user in rows {
+            match user {
+                Ok(u) => users.push(u),
+                Err(err) => warn!("Bad data"),
+            }
+        }
+        Ok(users)
+    }
+
+    pub fn get_team_members(
+        &self,
+        conn: &Connection,
+        team_id: i32,
+    ) -> Result<Vec<Member>, DatastoreError> {
+        let mut stmt = match conn.prepare(
+            "SELECT tu.id as id, u.id as userId, u.name, u.lastname, u.email FROM TeamsUsers tu
+        INNER Join Users u on tu.userId = u.id
+        where tu.teamId=?1
+        ",
+        ) {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let rows = match stmt.query_map(params![team_id], |row| {
+            Ok(Member {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                name: row.get(2)?,
+                lastname: row.get(3)?,
+                email: row.get(4)?,
+            })
+        }) {
+            Ok(members) => members,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let mut members: Vec<Member> = Vec::new();
+        for team in rows {
+            match team {
+                Ok(t) => members.push(t),
+                Err(err) => warn!("Bad data"),
+            }
+        }
+        Ok(members)
+    }
+
+    pub fn add_members(
+        &self,
+        conn: &Connection,
+        team_id: i32,
+        members: Vec<i32>,
+    ) -> Result<bool, DatastoreError> {
+        let mut stmt = match conn.prepare("INSERT INTO TeamsUsers (teamId, userId) VALUES (?1, ?2)")
+        {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        // let transaction = conn.transaction().unwrap();
+
+        for user_id in members {
+            let _ = match stmt.execute(params![team_id, user_id]) {
+                Ok(r) => Ok(true),
+                Err(err) => Err(DatastoreError::InternalError(
+                    ("Faild to insert data").to_string(),
+                )),
+            };
+        }
+        // transaction.commit().unwrap();
+        Ok(true)
+    }
+
+    pub fn remove_member(
+        &self,
+        conn: &Connection,
+        team_id: i32,
+        member_id: i32,
+    ) -> Result<bool, DatastoreError> {
+        let mut stmt = match conn.prepare("DELETE FROM TeamsUsers WHERE id = ?1") {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        stmt.execute(params![member_id]).unwrap();
+        Ok(true)
     }
 }

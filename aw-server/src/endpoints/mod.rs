@@ -193,9 +193,18 @@ pub fn build_rocket(server_state: ServerState, config: AWConfig) -> rocket::Rock
         )
         .mount(
             "/api/user",
-            routes![user::login, user::signup, user::getUser],
+            routes![user::login, user::signup, user::getUser, user::getAllUsers],
         )
-        .mount("/api/teams", routes![team::getTeams, team::addTeam])
+        .mount(
+            "/api/teams",
+            routes![
+                team::getTeams,
+                team::addTeam,
+                team::getTeam,
+                team::addMembers,
+                team::removeMember
+            ],
+        )
         .mount("/", rocket_cors::catch_all_options_routes());
 
     // for each custom static directory, mount it at the given name

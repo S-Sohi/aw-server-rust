@@ -6,6 +6,7 @@ use rocket::response::status::BadRequest;
 
 use crate::endpoints::{HttpErrorJson, ServerState};
 use aw_models::Team;
+use aw_models::TeamDetailModel;
 use aw_models::TeamRequestModel;
 use aw_models::TeamResponseModel;
 use aw_models::User;
@@ -13,6 +14,8 @@ use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::Deserialize;
+use serde::Serialize;
+
 use std::array;
 use std::collections::HashMap;
 mod jwt;
@@ -197,4 +200,70 @@ pub fn addTeam(
     //     }
     //     Err(err) => Err(err.into()),
     // }
+}
+
+#[get("/team/<id>")]
+pub fn getTeam(
+    state: &State<ServerState>,
+    token: Token,
+    id: i32,
+) -> Result<Json<TeamDetailModel>, HttpErrorJson> {
+    // let tokenString = token.clone().0;
+    // let userId = match validate_jwt(&tokenString) {
+    //     Ok(userId) => userId,
+    //     Err(_) => todo!(),
+    // };
+    let datastore = endpoints_get_lock!(state.datastore);
+    let members = datastore.get_team_members(id).unwrap();
+    match datastore.get_team(id) {
+        Ok(team) => Ok(Json(TeamDetailModel {
+            id: team.id,
+            description: team.description,
+            name: team.name,
+            members: members,
+        })),
+        Err(err) => Err(HttpErrorJson::new(
+            Status::BadRequest,
+            "Something went wrong!".to_string(),
+        )),
+    }
+}
+
+#[post("/<teamId>/members", data = "<members>")]
+pub fn addMembers(
+    state: &State<ServerState>,
+    teamId: i32,
+    members: Json<Vec<i32>>,
+    token: Token,
+) -> Result<Json<bool>, HttpErrorJson> {
+    let tokenString = token.clone().0;
+    let ownerId = match validate_jwt(&tokenString) {
+        Ok(ownerId) => ownerId,
+        Err(_) => todo!(),
+    };
+    let datastore = endpoints_get_lock!(state.datastore);
+    let memberIds = members.0;
+    match datastore.add_members(teamId, memberIds) {
+        Ok(team) => Ok(Json(true)),
+        Err(_) => Ok(Json(false)),
+    }
+}
+
+#[delete("/<teamId>/member/<memberId>")]
+pub fn removeMember(
+    state: &State<ServerState>,
+    teamId: i32,
+    memberId: i32,
+    token: Token,
+) -> Result<Json<bool>, HttpErrorJson> {
+    let tokenString = token.clone().0;
+    let ownerId = match validate_jwt(&tokenString) {
+        Ok(ownerId) => ownerId,
+        Err(_) => todo!(),
+    };
+    let datastore = endpoints_get_lock!(state.datastore);
+    match datastore.remove_member(teamId, memberId) {
+        Ok(team) => Ok(Json(true)),
+        Err(_) => Ok(Json(false)),
+    }
 }

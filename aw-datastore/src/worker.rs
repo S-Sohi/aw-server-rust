@@ -3,6 +3,8 @@ use std::collections::LinkedList;
 use std::fmt;
 use std::thread;
 
+use aw_models::Member;
+use aw_models::PublicUser;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -50,7 +52,11 @@ impl fmt::Debug for Datastore {
 pub enum Response {
     Empty(),
     User(User),
-    Team(Vec<Team>),
+    PublicUser(PublicUser),
+    Users(Vec<PublicUser>),
+    Members(Vec<Member>),
+    Teams(Vec<Team>),
+    Team(Team),
     Bucket(Bucket),
     BucketMap(HashMap<String, Bucket>),
     Event(Event),
@@ -90,6 +96,11 @@ pub enum Command {
     GetTeams(i32),
     AddTeam(TeamRequestModel, i32),
     GetTeamMembersCount(i32), // EditTeam(Team),
+    GetTeam(i32),
+    GetAllUsers(),
+    GetMembersOfTeam(i32),
+    AddMembers(i32, Vec<i32>),
+    RemoveMember(i32, i32),
 }
 
 fn _unwrap_response(
@@ -307,17 +318,17 @@ impl DatastoreWorker {
                 Err(e) => Err(e),
             },
             Command::AddUser(user) => match ds.signup(tx, user) {
-                Ok((result)) => Ok(Response::User(result)),
+                Ok((result)) => Ok(Response::PublicUser(result)),
                 Err(e) => Err(e),
             },
 
             Command::GetUser(userId) => match ds.get_user(tx, userId) {
-                Ok((result)) => Ok(Response::User(result)),
+                Ok((result)) => Ok(Response::PublicUser(result)),
                 Err(e) => Err(e),
             },
 
             Command::GetTeams(ownerId) => match ds.get_teams(tx, ownerId) {
-                Ok(teams) => Ok((Response::Team(teams))),
+                Ok(teams) => Ok((Response::Teams(teams))),
                 Err(e) => Err(e),
             },
 
@@ -330,6 +341,32 @@ impl DatastoreWorker {
                 Ok(count) => Ok(Response::Count((count))),
                 Err(e) => Err(e),
             },
+
+            Command::GetMembersOfTeam(team_id) => match ds.get_team_members(tx, team_id) {
+                Ok(members) => Ok(Response::Members((members))),
+                Err(e) => Err(e),
+            },
+            Command::GetTeam(team_id) => match ds.get_team(tx, team_id) {
+                Ok(team) => Ok(Response::Team(team)),
+                Err(e) => Err(e),
+            },
+
+            Command::GetAllUsers() => match ds.get_all_users(tx) {
+                Ok(users) => Ok(Response::Users(users)),
+                Err(e) => Err(e),
+            },
+
+            Command::AddMembers(team_id, members) => match ds.add_members(tx, team_id, members) {
+                Ok(team) => Ok(Response::Empty()),
+                Err(e) => Err(e),
+            },
+
+            Command::RemoveMember(team_id, member_id) => {
+                match ds.remove_member(tx, team_id, member_id) {
+                    Ok(team) => Ok(Response::Empty()),
+                    Err(e) => Err(e),
+                }
+            }
 
             Command::Close() => {
                 self.quit = true;
@@ -581,24 +618,24 @@ impl Datastore {
         }
     }
 
-    pub fn get_user(&self, userId: i32) -> Result<User, DatastoreError> {
+    pub fn get_user(&self, userId: i32) -> Result<PublicUser, DatastoreError> {
         let cmd = Command::GetUser(userId);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
-                Response::User(user) => Ok(user),
+                Response::PublicUser(user) => Ok(user),
                 _ => Err(DatastoreError::NoUser()),
             },
             Err(e) => Err(e),
         }
     }
 
-    pub fn add_user(&self, user: User) -> Result<User, DatastoreError> {
+    pub fn add_user(&self, user: User) -> Result<PublicUser, DatastoreError> {
         let cmd = Command::AddUser(user);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
-                Response::User(user) => Ok(user),
+                Response::PublicUser(user) => Ok(user),
                 _ => Err(DatastoreError::NoUser()),
             },
             Err(e) => Err(e),
@@ -610,7 +647,7 @@ impl Datastore {
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
-                Response::Team(teams) => Ok(teams),
+                Response::Teams(teams) => Ok(teams),
                 _ => Err(DatastoreError::InternalError(("".to_string()))),
             },
             Err(e) => Err(e),
@@ -636,6 +673,68 @@ impl Datastore {
             Ok(r) => match r {
                 Response::Count(count) => Ok(count),
                 _ => Err(DatastoreError::InternalError(("".to_string()))),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_team_members(&self, team_id: i32) -> Result<Vec<Member>, DatastoreError> {
+        let cmd = Command::GetMembersOfTeam(team_id);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::Members(members) => Ok(members),
+                _ => Err(DatastoreError::InternalError(("".to_string()))),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_team(&self, team_id: i32) -> Result<Team, DatastoreError> {
+        let cmd = Command::GetTeam(team_id);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::Team(team) => Ok(team),
+                _ => Err(DatastoreError::InternalError(("".to_string()))),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_all_users(&self) -> Result<Vec<PublicUser>, DatastoreError> {
+        let cmd = Command::GetAllUsers();
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::Users(users) => Ok(users),
+                _ => Err(DatastoreError::NoUser()),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn add_members(&self, team_id: i32, members: Vec<i32>) -> Result<(), DatastoreError> {
+        let cmd = Command::AddMembers(team_id, members);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::Empty() => Ok(()),
+                _ => Err(DatastoreError::NoUser()),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn remove_member(&self, team_id: i32, member_id: i32) -> Result<(), DatastoreError> {
+        let cmd = Command::RemoveMember(team_id, member_id);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::Empty() => Ok(()),
+                _ => Err(DatastoreError::InternalError(
+                    "Faild to remove member".to_string(),
+                )),
             },
             Err(e) => Err(e),
         }

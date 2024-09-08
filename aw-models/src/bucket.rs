@@ -28,6 +28,7 @@ pub struct Bucket {
     // few events are being dropped during import instead of failing the whole import
     pub events: Option<TryVec<Event>>,
     pub last_updated: Option<DateTime<Utc>>, // TODO: Should probably be moved into metadata field
+    pub user_id: i32
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
@@ -55,6 +56,7 @@ fn test_bucket() {
         metadata: BucketMetadata::default(),
         events: None,
         last_updated: None,
+        user_id: 1,
     };
     debug!("bucket: {:?}", b);
 }

@@ -67,6 +67,7 @@ pub fn merge_events_by_keys(events: Vec<Event>, keys: Vec<String>) -> Vec<Event>
                 timestamp: event.timestamp,
                 duration: event.duration,
                 data: event.data.clone(),
+                team_id: 1,
             };
             merged_events_map.insert(summed_key, merged_event);
         }
@@ -99,24 +100,28 @@ mod tests {
             timestamp: DateTime::from_str("2000-01-01T00:00:00Z").unwrap(),
             duration: Duration::seconds(1),
             data: json_map! {"test": json!(1)},
+            team_id: 1,
         };
         let e2 = Event {
             id: None,
             timestamp: DateTime::from_str("2000-01-01T00:00:01Z").unwrap(),
             duration: Duration::seconds(3),
             data: json_map! {"test2": json!(3)},
+            team_id: 1,
         };
         let e3 = Event {
             id: None,
             timestamp: DateTime::from_str("2000-01-01T00:00:02Z").unwrap(),
             duration: Duration::seconds(7),
             data: json_map! {"test": json!(6)},
+            team_id: 1,
         };
         let e4 = Event {
             id: None,
             timestamp: DateTime::from_str("2000-01-01T00:00:03Z").unwrap(),
             duration: Duration::seconds(9),
             data: json_map! {"test": json!(1)},
+            team_id: 1,
         };
         let in_events = vec![e1, e2, e3, e4];
         let res1 = merge_events_by_keys(in_events, vec!["test".to_string()]);
@@ -128,12 +133,14 @@ mod tests {
                 timestamp: DateTime::from_str("2000-01-01T00:00:00Z").unwrap(),
                 duration: Duration::seconds(10),
                 data: json_map! {"test": json!(1)},
+                team_id: 1,
             },
             Event {
                 id: None,
                 timestamp: DateTime::from_str("2000-01-01T00:00:02Z").unwrap(),
                 duration: Duration::seconds(7),
                 data: json_map! {"test": json!(6)},
+                team_id: 1,
             },
         ];
         assert_eq!(&res2, &expected);

@@ -1,3 +1,7 @@
+use jwt::{create_jwt, validate_jwt, Claims};
+use rocket::outcome::Outcome;
+use rocket::request::{self, FromRequest, Request};
+use serde::Deserialize;
 use std::collections::HashMap;
 
 use gethostname::gethostname;
@@ -13,6 +17,8 @@ use aw_models::TryVec;
 
 use rocket::http::Status;
 use rocket::State;
+
+mod jwt;
 
 use crate::endpoints::util::BucketsExportRocket;
 use crate::endpoints::{HttpErrorJson, ServerState};
@@ -44,13 +50,45 @@ pub fn bucket_get(
 ///
 /// If hostname is "!local", the hostname and device_id will be set from the server info.
 /// This is useful for watchers which are known/assumed to run locally but might not know their hostname (like aw-watcher-web).
+#[derive(Deserialize, Clone)]
+pub struct Token(String);
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for Token {
+    type Error = ();
+
+    async fn from_request(request: &'r Request<'_>) -> request::Outcome<Self, Self::Error> {
+        // Look for the "Authorization" header
+        if let Some(token_header) = request.headers().get_one("Authorization") {
+            if let Some(token) = token_header.strip_prefix("Bearer ") {
+                return Outcome::Success(Token(token.to_string()));
+            }
+        }
+
+        Outcome::Forward(Status::Unauthorized)
+    }
+}
+
 #[post("/<bucket_id>", data = "<message>", format = "application/json")]
 pub fn bucket_new(
     bucket_id: &str,
     message: Json<Bucket>,
     state: &State<ServerState>,
+    // token: Token,
 ) -> Result<(), HttpErrorJson> {
     let mut bucket = message.into_inner();
+    // let tokenString = token.clone().0;
+    // let userId = match validate_jwt(&tokenString) {
+    //     Ok(userId) => userId,
+    //     Err(_) => -1,
+    // };
+    // if (userId == -1) {
+    //     return Err(HttpErrorJson::new(
+    //         Status::Forbidden,
+    //         "Authentication is required".to_string(),
+    //     ));
+    // }
+    // bucket.user_id = userId;
+
     if bucket.id != bucket_id {
         bucket.id = bucket_id.to_string();
     }

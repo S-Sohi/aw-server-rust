@@ -62,11 +62,12 @@ pub fn union_no_overlap(events1: Vec<Event>, mut events2: Vec<Event>) -> Vec<Eve
 
 fn split_event(e: &Event, timestamp: DateTime<Utc>) -> (Event, Option<Event>) {
     if e.timestamp < timestamp && timestamp < e.timestamp + e.duration {
-        let e1 = Event::new(e.timestamp, timestamp - e.timestamp, e.data.clone());
+        let e1 = Event::new(e.timestamp, timestamp - e.timestamp, e.data.clone(), 1);
         let e2 = Event::new(
             timestamp,
             e.duration - (timestamp - e.timestamp),
             e.data.clone(),
+            1,
         );
         (e1, Some(e2))
     } else {
@@ -89,6 +90,7 @@ mod tests {
             timestamp: now,
             duration: Duration::hours(2),
             data: serde_json::Map::new(),
+            team_id: 1,
         };
         let (e1, e2_opt) = split_event(&e, now + td1h);
         assert_eq!(e1.timestamp, now);
@@ -110,8 +112,8 @@ mod tests {
         // A test without any actual overlap
         let now = Utc::now();
         let td1h = Duration::hours(1);
-        let e1 = Event::new(now, td1h, serde_json::Map::new());
-        let e2 = Event::new(now + td1h, td1h, serde_json::Map::new());
+        let e1 = Event::new(now, td1h, serde_json::Map::new(), 1);
+        let e2 = Event::new(now + td1h, td1h, serde_json::Map::new(), 1);
         let events1 = vec![e1.clone()];
         let events2 = vec![e2.clone()];
         let events_union = union_no_overlap(events1, events2);
@@ -140,8 +142,8 @@ mod tests {
         // A test where the events overlap
         let now = Utc::now();
         let td1h = Duration::hours(1);
-        let e1 = Event::new(now, td1h, serde_json::Map::new());
-        let e2 = Event::new(now, Duration::hours(2), serde_json::Map::new());
+        let e1 = Event::new(now, td1h, serde_json::Map::new(), 1);
+        let e2 = Event::new(now, Duration::hours(2), serde_json::Map::new(), 1);
         let events1 = vec![e1];
         let events2 = vec![e2];
         let events_union = union_no_overlap(events1, events2);
@@ -153,8 +155,8 @@ mod tests {
         assert_eq!(events_union[1].duration, td1h);
 
         // Now test the case where e2 starts before e1
-        let e1 = Event::new(now + td1h, td1h, serde_json::Map::new());
-        let e2 = Event::new(now, Duration::hours(2), serde_json::Map::new());
+        let e1 = Event::new(now + td1h, td1h, serde_json::Map::new(), 1);
+        let e2 = Event::new(now, Duration::hours(2), serde_json::Map::new(), 1);
         let events1 = vec![e1];
         let events2 = vec![e2];
         let events_union = union_no_overlap(events1, events2);

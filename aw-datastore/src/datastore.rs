@@ -225,6 +225,18 @@ fn _migrate_new_version(conn: &Connection) {
     )
     .expect("Failed to create TeamsUsers table");
 
+    conn.execute(
+        "ALTER TABLE buckets ADD COLUMN user_id INTEGER NOT NULL;",
+        &[] as &[&dyn ToSql],
+    )
+    .expect("Failed to upgrade database when adding user_id field to buckets");
+
+    conn.execute(
+        "ALTER TABLE events ADD COLUMN team_id INTEGER NOT NULL;",
+        &[] as &[&dyn ToSql],
+    )
+    .expect("Failed to upgrade database when adding team_id field to events");
+
     conn.pragma_update(None, "user_version", 5)
         .expect("Failed to update database version!");
 }
@@ -330,6 +342,7 @@ impl DatastoreInstance {
                 },
                 events: None,
                 last_updated: None,
+                user_id: 1,
             })
         }) {
             Ok(buckets) => buckets,
@@ -385,8 +398,8 @@ impl DatastoreInstance {
         };
         let mut stmt = match conn.prepare(
             "
-                INSERT INTO buckets (name, type, client, hostname, created, data)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                INSERT INTO buckets (name, type, client, hostname, created, data, user_id)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         ) {
             Ok(buckets) => buckets,
             Err(err) => {
@@ -403,6 +416,7 @@ impl DatastoreInstance {
             &bucket.hostname,
             &bucket.created as &dyn ToSql,
             &data,
+            &bucket.user_id,
         ]);
 
         match res {
@@ -491,8 +505,8 @@ impl DatastoreInstance {
 
         let mut stmt = match conn.prepare(
             "
-                INSERT OR REPLACE INTO events(bucketrow, id, starttime, endtime, data)
-                VALUES (?1, ?2, ?3, ?4, ?5)",
+                INSERT OR REPLACE INTO events(bucketrow, id, starttime, endtime, data, team_id)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         ) {
             Ok(stmt) => stmt,
             Err(err) => {
@@ -519,6 +533,7 @@ impl DatastoreInstance {
                 &starttime_nanos,
                 &endtime_nanos,
                 &data as &dyn ToSql,
+                &event.team_id
             ]);
             match res {
                 Ok(_) => {
@@ -743,6 +758,7 @@ impl DatastoreInstance {
                 timestamp: DateTime::from_timestamp(time_seconds, time_subnanos).unwrap(),
                 duration: Duration::nanoseconds(duration_ns),
                 data,
+                team_id: 1,
             })
         }) {
             Ok(rows) => rows,
@@ -835,6 +851,7 @@ impl DatastoreInstance {
                     timestamp: DateTime::from_timestamp(time_seconds, time_subnanos).unwrap(),
                     duration: Duration::nanoseconds(duration_ns),
                     data,
+                    team_id: 1,
                 })
             },
         ) {

@@ -63,6 +63,7 @@ mod import {
                     start: None,
                     end: None,
                 },
+                user_id: 1,
             })
         }) {
             Ok(buckets) => buckets,
@@ -141,6 +142,7 @@ mod import {
                         timestamp,
                         duration: Duration::nanoseconds(duration_ns),
                         data,
+                        team_id: 1,
                     };
                     list.push(event)
                 }

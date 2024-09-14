@@ -27,6 +27,7 @@ mod tryvec;
 mod user;
 
 pub use self::bucket::Bucket;
+pub use self::bucket::PublicBucket;
 pub use self::bucket::BucketMetadata;
 pub use self::bucket::BucketsExport;
 pub use self::event::Event;
@@ -37,6 +38,7 @@ pub use self::team::Team;
 pub use self::team::TeamDetailModel;
 pub use self::team::TeamRequestModel;
 pub use self::team::TeamResponseModel;
+pub use self::team::TeamUserModel;
 pub use self::timeinterval::TimeInterval;
 pub use self::tryvec::TryVec;
 pub use self::user::PublicUser;

@@ -5,6 +5,7 @@ use std::thread;
 
 use aw_models::Member;
 use aw_models::PublicUser;
+use aw_models::TeamUserModel;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -56,6 +57,7 @@ pub enum Response {
     Users(Vec<PublicUser>),
     Members(Vec<Member>),
     Teams(Vec<Team>),
+    UserTeams(Vec<TeamUserModel>),
     Team(Team),
     Bucket(Bucket),
     BucketMap(HashMap<String, Bucket>),
@@ -101,6 +103,7 @@ pub enum Command {
     GetMembersOfTeam(i32),
     AddMembers(i32, Vec<i32>),
     RemoveMember(i32, i32),
+    GetUserTeams(i32)
 }
 
 fn _unwrap_response(
@@ -364,6 +367,13 @@ impl DatastoreWorker {
             Command::RemoveMember(team_id, member_id) => {
                 match ds.remove_member(tx, team_id, member_id) {
                     Ok(team) => Ok(Response::Empty()),
+                    Err(e) => Err(e),
+                }
+            }
+
+            Command::GetUserTeams(user_id) => {
+                match ds.get_user_teams(tx, user_id) {
+                    Ok(teams) => Ok(Response::UserTeams(teams)),
                     Err(e) => Err(e),
                 }
             }
@@ -642,12 +652,24 @@ impl Datastore {
         }
     }
 
-    pub fn get_teams(&self, ownerId: i32) -> Result<Vec<Team>, DatastoreError> {
+    pub fn get_owner_teams(&self, ownerId: i32) -> Result<Vec<Team>, DatastoreError> {
         let cmd = Command::GetTeams(ownerId);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
                 Response::Teams(teams) => Ok(teams),
+                _ => Err(DatastoreError::InternalError(("".to_string()))),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_user_teams(&self, user_id: i32) -> Result<Vec<TeamUserModel>, DatastoreError> {
+        let cmd = Command::GetUserTeams(user_id);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::UserTeams(teams) => Ok(teams),
                 _ => Err(DatastoreError::InternalError(("".to_string()))),
             },
             Err(e) => Err(e),

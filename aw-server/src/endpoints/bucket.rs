@@ -10,10 +10,10 @@ use rocket::serde::json::Json;
 use chrono::DateTime;
 use chrono::Utc;
 
-use aw_models::Bucket;
 use aw_models::BucketsExport;
 use aw_models::Event;
 use aw_models::TryVec;
+use aw_models::{Bucket, PublicBucket};
 
 use rocket::http::Status;
 use rocket::State;
@@ -71,23 +71,35 @@ impl<'r> FromRequest<'r> for Token {
 #[post("/<bucket_id>", data = "<message>", format = "application/json")]
 pub fn bucket_new(
     bucket_id: &str,
-    message: Json<Bucket>,
+    message: Json<PublicBucket>,
     state: &State<ServerState>,
-    // token: Token,
+    token: Token,
 ) -> Result<(), HttpErrorJson> {
-    let mut bucket = message.into_inner();
-    // let tokenString = token.clone().0;
-    // let userId = match validate_jwt(&tokenString) {
-    //     Ok(userId) => userId,
-    //     Err(_) => -1,
-    // };
-    // if (userId == -1) {
-    //     return Err(HttpErrorJson::new(
-    //         Status::Forbidden,
-    //         "Authentication is required".to_string(),
-    //     ));
-    // }
-    // bucket.user_id = userId;
+    let mut sent_bucket = message.into_inner();
+    let tokenString = token.clone().0;
+    let userId = match validate_jwt(&tokenString) {
+        Ok(userId) => userId,
+        Err(_) => -1,
+    };
+    if userId == -1 {
+        return Err(HttpErrorJson::new(
+            Status::Forbidden,
+            "Authentication is required".to_string(),
+        ));
+    }
+    let mut bucket = Bucket {
+        bid: sent_bucket.bid,
+        id: sent_bucket.id,
+        _type: sent_bucket._type,
+        client: sent_bucket.client,
+        hostname: sent_bucket.hostname,
+        created: sent_bucket.created,
+        data: sent_bucket.data,
+        metadata: sent_bucket.metadata,
+        events: sent_bucket.events,
+        last_updated: sent_bucket.last_updated,
+        user_id: userId,
+    };
 
     if bucket.id != bucket_id {
         bucket.id = bucket_id.to_string();

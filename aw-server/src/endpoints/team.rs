@@ -5,11 +5,11 @@ use rocket::request::{self, FromRequest, Request};
 use rocket::response::status::BadRequest;
 
 use crate::endpoints::{HttpErrorJson, ServerState};
-use aw_models::Team;
 use aw_models::TeamDetailModel;
 use aw_models::TeamRequestModel;
 use aw_models::TeamResponseModel;
 use aw_models::User;
+use aw_models::{Team, TeamUserModel};
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -44,85 +44,8 @@ impl<'r> FromRequest<'r> for Token {
     }
 }
 
-// #[post("/login", data = "<input>")]
-// pub fn login(
-//     state: &State<ServerState>,
-//     input: Json<LoginModel>,
-// ) -> Result<Json<String>, HttpErrorJson> {
-//     let email = input.email.to_string();
-//     let password = input.password.to_string();
-//     if (email.is_empty() || password.is_empty()) {
-//         let err_msg = format!("No user");
-//         return Err(HttpErrorJson::new(Status::BadRequest, err_msg));
-//     }
-//     let datastore = endpoints_get_lock!(state.datastore);
-//     match datastore.get_user_by_email(input.email.to_string()) {
-//         Ok(user) => {
-//             if user.password.clone() == password {
-//                 let claims = Claims {
-//                     userId: user.id,
-//                     exp: 10000000000, // Set your expiration logic
-//                 };
-
-//                 match create_jwt(&claims) {
-//                     Ok(token) => Ok(Json(token)),
-//                     Err(_) => Err(HttpErrorJson::new(
-//                         Status::BadRequest,
-//                         "could not generate token".to_string(),
-//                     )),
-//                 }
-//             } else {
-//                 return Err(HttpErrorJson::new(
-//                     Status::BadRequest,
-//                     "No user with this password found".to_string(),
-//                 ));
-//             }
-//         }
-//         Err(err) => Err(err.into()),
-//     }
-// }
-
-// #[post("/signup", data = "<input>")]
-// pub fn signup(
-//     state: &State<ServerState>,
-//     input: Json<SignupModel>,
-// ) -> Result<Json<bool>, HttpErrorJson> {
-//     let password = input.password.to_string();
-//     let email = input.email.to_string();
-//     let name = input.name.to_string();
-//     let lastname = input.lastname.to_string();
-//     if (email.is_empty() || password.is_empty()) {
-//         let err_msg = format!("No user");
-//         return Err(HttpErrorJson::new(Status::BadRequest, err_msg));
-//     }
-//     let user = User {
-//         id: 0,
-//         email: email,
-//         password: password,
-//         name: name,
-//         lastname: lastname,
-//         role: 1,
-//     };
-
-//     let datastore = endpoints_get_lock!(state.datastore);
-//     let isUserExisted = match datastore.get_user_by_email(input.email.to_string()) {
-//         Ok(user) => true,
-//         Err(_) => false,
-//     };
-//     if (isUserExisted == true) {
-//         return Err(HttpErrorJson::new(
-//             Status::BadRequest,
-//             "Email is used".to_string(),
-//         ));
-//     }
-//     match datastore.add_user(user) {
-//         Ok(user) => Ok(Json(true)),
-//         Err(err) => Err(err.into()),
-//     }
-// }
-
 #[get("/")]
-pub fn getTeams(
+pub fn getOwnerTeams(
     state: &State<ServerState>,
     token: Token,
 ) -> Result<Json<Vec<TeamResponseModel>>, HttpErrorJson> {
@@ -133,7 +56,7 @@ pub fn getTeams(
     };
     let datastore = endpoints_get_lock!(state.datastore);
     let mut response: Vec<TeamResponseModel> = Vec::new();
-    match datastore.get_teams(userId) {
+    match datastore.get_owner_teams(userId) {
         Ok(teams) => {
             for team in teams {
                 let count = datastore.get_team_members_count(team.id)?;
@@ -266,4 +189,24 @@ pub fn removeMember(
         Ok(team) => Ok(Json(true)),
         Err(_) => Ok(Json(false)),
     }
+}
+
+#[get("/user")]
+pub fn getUserTeams(
+    state: &State<ServerState>,
+    token: Token,
+) -> Result<Json<Vec<TeamUserModel>>, HttpErrorJson> {
+    let token_string = token.clone().0;
+    let user_id = match validate_jwt(&token_string) {
+        Ok(user_id) => user_id,
+        Err(_) => todo!(),
+    };
+    let datastore = endpoints_get_lock!(state.datastore);
+    match datastore.get_user_teams(user_id) {
+        Ok(teams) => Ok(Json(teams)),
+        Err(err) => {
+            return Err(err.into())
+        }
+    }
+    // Ok(Json(response))
 }

@@ -198,11 +198,12 @@ pub fn build_rocket(server_state: ServerState, config: AWConfig) -> rocket::Rock
         .mount(
             "/api/teams",
             routes![
-                team::getTeams,
+                team::getOwnerTeams,
                 team::addTeam,
                 team::getTeam,
                 team::addMembers,
-                team::removeMember
+                team::removeMember,
+                team::getUserTeams
             ],
         )
         .mount("/", rocket_cors::catch_all_options_routes());

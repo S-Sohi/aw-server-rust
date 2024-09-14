@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use aw_models::Member;
 use aw_models::PublicUser;
 use aw_models::TeamRequestModel;
+use aw_models::TeamUserModel;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
@@ -283,7 +284,7 @@ impl DatastoreInstance {
             SELECT  buckets.id, buckets.name, buckets.type, buckets.client,
                     buckets.hostname, buckets.created,
                     min(events.starttime), max(events.endtime),
-                    buckets.data
+                    buckets.data, buckets.user_id
             FROM buckets
             LEFT OUTER JOIN events ON buckets.id = events.bucketrow
             GROUP BY buckets.id
@@ -342,7 +343,7 @@ impl DatastoreInstance {
                 },
                 events: None,
                 last_updated: None,
-                user_id: 1,
+                user_id: row.get(6)?,
             })
         }) {
             Ok(buckets) => buckets,
@@ -533,7 +534,7 @@ impl DatastoreInstance {
                 &starttime_nanos,
                 &endtime_nanos,
                 &data as &dyn ToSql,
-                &event.team_id
+                &event.team_id,
             ]);
             match res {
                 Ok(_) => {
@@ -1333,5 +1334,47 @@ impl DatastoreInstance {
         };
         stmt.execute(params![member_id]).unwrap();
         Ok(true)
+    }
+
+    pub fn get_user_teams(
+        &self,
+        conn: &Connection,
+        user_id: i32,
+    ) -> Result<Vec<TeamUserModel>, DatastoreError> {
+        let mut stmt = match conn.prepare(
+            "SELECT t.id, t.name, t.description FROM TeamsUsers tu
+                    INNER Join Teams t on tu.teamId = t.id
+                    where tu.userId=?1
+        ",
+        ) {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let rows = match stmt.query_map(params![user_id], |row| {
+            Ok(TeamUserModel {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+            })
+        }) {
+            Ok(teams) => teams,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let mut teams: Vec<TeamUserModel> = Vec::new();
+        for team in rows {
+            match team {
+                Ok(t) => teams.push(t),
+                Err(err) => warn!("Bad data"),
+            }
+        }
+        Ok(teams)
     }
 }

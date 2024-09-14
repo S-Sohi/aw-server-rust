@@ -42,3 +42,11 @@ pub struct TeamDetailModel {
     pub description: String,
     pub members: Vec<Member>,
 }
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+
+pub struct TeamUserModel {
+    pub id: i32,
+    pub name: String,
+    pub description: String
+}

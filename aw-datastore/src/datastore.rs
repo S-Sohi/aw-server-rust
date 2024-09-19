@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use aw_models::Member;
 use aw_models::PublicUser;
+use aw_models::TeamConfiguration;
 use aw_models::TeamRequestModel;
 use aw_models::TeamUserModel;
 use chrono::DateTime;
@@ -225,6 +226,18 @@ fn _migrate_new_version(conn: &Connection) {
         &[] as &[&dyn ToSql],
     )
     .expect("Failed to create TeamsUsers table");
+
+    conn.execute(
+        "
+        CREATE TABLE IF NOT EXISTS TeamConfiguration (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teamId INTEGER NOT NULL,
+            apps TEXT,
+            FOREIGN KEY (teamId) REFERENCES Teams(id)
+        )",
+        &[] as &[&dyn ToSql],
+    )
+    .expect("Failed to create TeamConfiguration table");
 
     conn.execute(
         "ALTER TABLE buckets ADD COLUMN user_id INTEGER NOT NULL;",
@@ -1377,4 +1390,96 @@ impl DatastoreInstance {
         }
         Ok(teams)
     }
+
+    pub fn update_configuration(
+        &self,
+        conn: &Connection,
+        team_id:i32,
+        apps:String
+    ) -> Result<bool, DatastoreError> {
+        let mut stmt = match conn.prepare("UPDATE TeamConfiguration set apps = ?1 where teamId = ?2")
+        {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        match stmt.execute(params![apps, team_id]) {
+            Ok(r) => Ok(true),
+            Err(err) => Err(DatastoreError::InternalError(
+                ("Faild to insert data").to_string(),
+            )),
+        }
+    }
+
+    pub fn add_configuration(
+        &self,
+        conn: &Connection,
+        team_id:i32,
+        apps:String
+    ) -> Result<bool, DatastoreError> {
+        let mut stmt = match conn.prepare("INSERT INTO TeamConfiguration (teamId, apps) VALUES (?1, ?2)")
+        {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        match stmt.execute(params![team_id, apps]) {
+            Ok(r) => Ok(true),
+            Err(err) => Err(DatastoreError::InternalError(
+                ("Faild to insert data").to_string(),
+            )),
+        }
+    }
+
+    pub fn get_configuration(
+        &self,
+        conn: &Connection,
+        team_id: i32,
+    ) -> Result<TeamConfiguration, DatastoreError> {
+        let mut stmt = match conn.prepare(
+            "SELECT tc.id, tc.teamId, tc.apps FROM TeamConfiguration tc
+                    where tc.teamId=?1
+        ",
+        ) {
+            Ok(stmt) => stmt,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        let config = match stmt.query_row(params![team_id], |row| {
+            let id = row.get(0)?;
+            let team_id = row.get(1)?;
+            let apps_string = row.get::<usize,String>(2)?;
+            let apps:Vec<String>;
+            if apps_string.len() > 0{
+                apps = apps_string.split(',').map(|s| s.to_string())
+                .collect();
+            }
+            else{
+                apps = Vec::new();
+            }
+            return Ok(TeamConfiguration{
+                id:id,
+                team_id:team_id,
+                apps:apps
+            })
+        }) {
+            Ok(config) => config,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare get_value SQL statement: {err}"
+                )))
+            }
+        };
+        Ok(config)
+    }
+    
 }

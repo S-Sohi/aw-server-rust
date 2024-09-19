@@ -203,7 +203,9 @@ pub fn build_rocket(server_state: ServerState, config: AWConfig) -> rocket::Rock
                 team::getTeam,
                 team::addMembers,
                 team::removeMember,
-                team::getUserTeams
+                team::getUserTeams,
+                team::addConfiguration,
+                team::getTeamConfiguration
             ],
         )
         .mount("/", rocket_cors::catch_all_options_routes());

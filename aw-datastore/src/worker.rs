@@ -5,6 +5,7 @@ use std::thread;
 
 use aw_models::Member;
 use aw_models::PublicUser;
+use aw_models::TeamConfiguration;
 use aw_models::TeamUserModel;
 use chrono::DateTime;
 use chrono::Duration;
@@ -59,6 +60,7 @@ pub enum Response {
     Teams(Vec<Team>),
     UserTeams(Vec<TeamUserModel>),
     Team(Team),
+    TeamConfiguration(TeamConfiguration),
     Bucket(Bucket),
     BucketMap(HashMap<String, Bucket>),
     Event(Event),
@@ -103,7 +105,10 @@ pub enum Command {
     GetMembersOfTeam(i32),
     AddMembers(i32, Vec<i32>),
     RemoveMember(i32, i32),
-    GetUserTeams(i32)
+    GetUserTeams(i32),
+    AddTeamConfiguration(i32, String),
+    UpdateTeamConfiguration(i32, String),
+    GetTeamConfiguration(i32)
 }
 
 fn _unwrap_response(
@@ -371,12 +376,25 @@ impl DatastoreWorker {
                 }
             }
 
-            Command::GetUserTeams(user_id) => {
-                match ds.get_user_teams(tx, user_id) {
-                    Ok(teams) => Ok(Response::UserTeams(teams)),
-                    Err(e) => Err(e),
-                }
-            }
+            Command::GetUserTeams(user_id) => match ds.get_user_teams(tx, user_id) {
+                Ok(teams) => Ok(Response::UserTeams(teams)),
+                Err(e) => Err(e),
+            },
+
+            Command::AddTeamConfiguration(team_id, apps) => match ds.add_configuration(tx, team_id, apps) {
+                Ok(teams) => Ok(Response::Empty()),
+                Err(e) => Err(e),
+            },
+
+            Command::UpdateTeamConfiguration(team_id, apps) => match ds.update_configuration(tx, team_id, apps) {
+                Ok(teams) => Ok(Response::Empty()),
+                Err(e) => Err(e),
+            },
+
+            Command::GetTeamConfiguration(team_id) => match ds.get_configuration(tx, team_id, ) {
+                Ok(config) => Ok(Response::TeamConfiguration(config)),
+                Err(e) => Err(e),
+            },
 
             Command::Close() => {
                 self.quit = true;
@@ -756,6 +774,48 @@ impl Datastore {
                 Response::Empty() => Ok(()),
                 _ => Err(DatastoreError::InternalError(
                     "Faild to remove member".to_string(),
+                )),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn add_configuration(&self, team_id: i32, apps: String) -> Result<(), DatastoreError> {
+        let cmd = Command::AddTeamConfiguration(team_id, apps);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::Empty() => Ok(()),
+                _ => Err(DatastoreError::InternalError(
+                    "Faild to add configuration".to_string(),
+                )),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn update_configuration(&self, team_id: i32, apps: String) -> Result<(), DatastoreError> {
+        let cmd = Command::UpdateTeamConfiguration(team_id, apps);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::Empty() => Ok(()),
+                _ => Err(DatastoreError::InternalError(
+                    "Faild to add configuration".to_string(),
+                )),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_configuration(&self, team_id: i32) -> Result<TeamConfiguration, DatastoreError> {
+        let cmd = Command::GetTeamConfiguration(team_id);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::TeamConfiguration(r) => Ok(r),
+                _ => Err(DatastoreError::InternalError(
+                    "Faild to get configuration".to_string(),
                 )),
             },
             Err(e) => Err(e),

@@ -39,6 +39,7 @@ pub use self::team::TeamDetailModel;
 pub use self::team::TeamRequestModel;
 pub use self::team::TeamResponseModel;
 pub use self::team::TeamUserModel;
+pub use self::team::TeamConfiguration;
 pub use self::timeinterval::TimeInterval;
 pub use self::tryvec::TryVec;
 pub use self::user::PublicUser;

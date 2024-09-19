@@ -5,11 +5,11 @@ use rocket::request::{self, FromRequest, Request};
 use rocket::response::status::BadRequest;
 
 use crate::endpoints::{HttpErrorJson, ServerState};
-use aw_models::TeamDetailModel;
 use aw_models::TeamRequestModel;
 use aw_models::TeamResponseModel;
 use aw_models::User;
 use aw_models::{Team, TeamUserModel};
+use aw_models::{TeamConfiguration, TeamDetailModel};
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
@@ -138,12 +138,17 @@ pub fn getTeam(
     // };
     let datastore = endpoints_get_lock!(state.datastore);
     let members = datastore.get_team_members(id).unwrap();
+    let configuration = match datastore.get_configuration(id){
+        Ok(config)=>config.apps,
+        Err(err) => Vec::new()
+    };
     match datastore.get_team(id) {
         Ok(team) => Ok(Json(TeamDetailModel {
             id: team.id,
             description: team.description,
             name: team.name,
             members: members,
+            apps: configuration
         })),
         Err(err) => Err(HttpErrorJson::new(
             Status::BadRequest,
@@ -204,9 +209,55 @@ pub fn getUserTeams(
     let datastore = endpoints_get_lock!(state.datastore);
     match datastore.get_user_teams(user_id) {
         Ok(teams) => Ok(Json(teams)),
-        Err(err) => {
-            return Err(err.into())
-        }
+        Err(err) => return Err(err.into()),
     }
     // Ok(Json(response))
+}
+
+#[get("/configuration/<team_id>")]
+pub fn getTeamConfiguration(
+    state: &State<ServerState>,
+    team_id: i32,
+) -> Result<Json<Vec<String>>, HttpErrorJson> {
+    let datastore = endpoints_get_lock!(state.datastore);
+    let configuration = match datastore.get_configuration(team_id){
+        Ok(config)=>{
+            if config.apps.len() > 0 {
+                return Ok(Json(config.apps))
+            }
+            else{
+                return Ok(Json(Vec::new()))
+            }
+        },
+        Err(err) => Ok(Json(Vec::new()))
+    };
+    return configuration
+}
+
+#[post("/<team_id>/configuration", data = "<team_configuration>")]
+pub fn addConfiguration(
+    state: &State<ServerState>,
+    token: Token,
+    team_id:i32,
+    team_configuration: Json<Vec<String>>
+) -> Result<Json<()>, HttpErrorJson> {
+    let token_string = token.clone().0;
+    let user_id = validate_jwt(&token_string).unwrap(); 
+    let datastore = endpoints_get_lock!(state.datastore);
+    let team = datastore.get_team(team_id).unwrap();
+    if team.ownerId != user_id {
+        return Err(HttpErrorJson::new(Status::Forbidden, "You are not the team owner!".to_string()))
+    }
+
+    let configuration: TeamConfiguration = match datastore.get_configuration(team_id){
+        Ok(config)=> config,
+        Err(err) => TeamConfiguration { id: -1, team_id: -1, apps: Vec::new() }
+    };
+    if configuration.id == -1{
+        datastore.add_configuration(team_id,team_configuration.join(",").clone()).unwrap();
+    }
+    else{
+        datastore.update_configuration(team_id,team_configuration.join(",").clone()).unwrap();
+    }
+    return Ok(Json(()))
 }

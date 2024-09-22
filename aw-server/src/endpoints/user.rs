@@ -1,17 +1,15 @@
-use jsonwebtoken::{decode, encode, Header, Validation};
+use hash::{generate_hash, verify_password};
 use jwt::{create_jwt, validate_jwt, Claims};
 use rocket::outcome::Outcome;
 use rocket::request::{self, FromRequest, Request};
-use rocket::response::status::BadRequest;
-
 use crate::endpoints::{HttpErrorJson, ServerState};
 use aw_models::{PublicUser, User};
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::State;
 use serde::Deserialize;
-use std::collections::HashMap;
 mod jwt;
+mod hash;
 
 #[derive(Deserialize, Clone, Copy)]
 pub struct LoginModel<'r> {
@@ -59,7 +57,7 @@ pub fn login(
     let datastore = endpoints_get_lock!(state.datastore);
     match datastore.get_user_by_email(input.email.to_string()) {
         Ok(user) => {
-            if user.password.clone() == password {
+            if verify_password(&password, &user.password) {
                 let claims = Claims {
                     userId: user.id,
                     exp: 10000000000, // Set your expiration logic
@@ -101,7 +99,7 @@ pub fn signup(
         id: 0,
         email: email,
         username: username,
-        password: password,
+        password: generate_hash(&password),
         name: name,
         lastname: lastname,
         role: 1,

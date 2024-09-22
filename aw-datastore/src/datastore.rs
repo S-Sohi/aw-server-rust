@@ -24,10 +24,24 @@ use rusqlite::params;
 use rusqlite::types::ToSql;
 
 use super::DatastoreError;
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Argon2,
+};
 
 fn _get_db_version(conn: &Connection) -> i32 {
     conn.pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap()
+}
+
+pub fn generate_hash(password: &str) -> String {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let password_hash = argon2
+        .hash_password(password.as_bytes(), &salt)
+        .expect("Failed to hash password")
+        .to_string();
+    return password_hash;
 }
 
 /*
@@ -193,11 +207,11 @@ fn _migrate_new_version(conn: &Connection) {
         &[] as &[&dyn ToSql],
     )
     .expect("Failed to create User table");
-
+    
     // Should force password change after first login
     conn.execute(
     "INSERT INTO Users (username, email, name, lastname, password , role) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    params!["admin", "admin@admin.com","admin", "admin", "admin", "1"] as &[&dyn ToSql],
+    params!["admin", "admin@admin.com","admin", "admin", generate_hash("admin"), "1"] as &[&dyn ToSql],
     )
     .expect("Failed to insert Admin user");
 
@@ -240,7 +254,7 @@ fn _migrate_new_version(conn: &Connection) {
     .expect("Failed to create TeamConfiguration table");
 
     conn.execute(
-        "ALTER TABLE buckets ADD COLUMN user_id INTEGER NOT NULL;",
+        "ALTER TABLE buckets ADD COLUMN user_id INTEGER NOT NULL REFERENCES Users(id);",
         &[] as &[&dyn ToSql],
     )
     .expect("Failed to upgrade database when adding user_id field to buckets");

@@ -86,6 +86,13 @@ pub enum Command {
         Option<DateTime<Utc>>,
         Option<u64>,
     ),
+    GetUserEvents(
+        i64,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+        Option<u64>,
+        Option<i32>,
+    ),
     GetEventCount(i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>),
     DeleteEventsById(i64, Vec<i64>),
     ForceCommit(),
@@ -283,6 +290,12 @@ impl DatastoreWorker {
             },
             Command::GetEvents(bucket_id, starttime_opt, endtime_opt, limit_opt) => {
                 match ds.get_events(tx, bucket_id, starttime_opt, endtime_opt, limit_opt) {
+                    Ok(el) => Ok(Response::EventList(el)),
+                    Err(e) => Err(e),
+                }
+            }
+            Command::GetUserEvents(bucket_id, starttime_opt, endtime_opt, limit_opt, team_id) => {
+                match ds.get_user_events(tx, bucket_id, starttime_opt, endtime_opt, limit_opt, team_id) {
                     Ok(el) => Ok(Response::EventList(el)),
                     Err(e) => Err(e),
                 }
@@ -530,6 +543,25 @@ impl Datastore {
         limit_opt: Option<u64>,
     ) -> Result<Vec<Event>, DatastoreError> {
         let cmd = Command::GetEvents(bucket_id, starttime_opt, endtime_opt, limit_opt);
+        let receiver = self.requester.request(cmd).unwrap();
+        match receiver.collect().unwrap() {
+            Ok(r) => match r {
+                Response::EventList(el) => Ok(el),
+                _ => panic!("Invalid response"),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn get_user_events(
+        &self,
+        bucket_id: i64,
+        starttime_opt: Option<DateTime<Utc>>,
+        endtime_opt: Option<DateTime<Utc>>,
+        limit_opt: Option<u64>,
+        team_id: Option<i32>,
+    ) -> Result<Vec<Event>, DatastoreError> {
+        let cmd = Command::GetUserEvents(bucket_id, starttime_opt, endtime_opt, limit_opt, team_id);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {

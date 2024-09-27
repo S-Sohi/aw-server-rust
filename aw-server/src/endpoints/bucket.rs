@@ -26,7 +26,7 @@ use crate::endpoints::{HttpErrorJson, ServerState};
 #[get("/<user_id>")]
 pub fn buckets_get(
     state: &State<ServerState>,
-    user_id: i32
+    user_id: i32,
 ) -> Result<Json<Vec<Bucket>>, HttpErrorJson> {
     let datastore = endpoints_get_lock!(state.datastore);
     match datastore.get_buckets(user_id) {
@@ -109,12 +109,13 @@ pub fn bucket_new(
     return result;
 }
 
-#[get("/<bucket_id>/events?<start>&<end>&<limit>")]
+#[get("/<bucket_id>/events?<start>&<end>&<limit>&<team_id>")]
 pub fn bucket_events_get(
     bucket_id: i64,
     start: Option<String>,
     end: Option<String>,
     limit: Option<u64>,
+    team_id: Option<i32>,
     state: &State<ServerState>,
 ) -> Result<Json<Vec<Event>>, HttpErrorJson> {
     let starttime: Option<DateTime<Utc>> = match start {
@@ -143,7 +144,7 @@ pub fn bucket_events_get(
         None => None,
     };
     let datastore = endpoints_get_lock!(state.datastore);
-    let res = datastore.get_events(bucket_id, starttime, endtime, limit);
+    let res = datastore.get_user_events(bucket_id, starttime, endtime, limit, team_id);
     match res {
         Ok(events) => Ok(Json(events)),
         Err(err) => Err(err.into()),

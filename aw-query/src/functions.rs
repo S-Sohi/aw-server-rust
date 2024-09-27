@@ -148,7 +148,7 @@ mod qfunctions {
         let interval = validate::get_timeinterval(env)?;
 
         let events = match ds.get_events(
-            bucket_id.as_str(),
+            bucket_id.parse().unwrap(),
             Some(*interval.start()),
             Some(*interval.end()),
             None,
@@ -174,7 +174,7 @@ mod qfunctions {
     ) -> Result<DataType, QueryError> {
         validate::args_length(&args, 0)?;
         let mut bucketnames: Vec<DataType> = Vec::new();
-        let buckets = match ds.get_buckets() {
+        let buckets = match ds.get_buckets(1) {
             Ok(buckets) => buckets,
             Err(e) => {
                 return Err(QueryError::BucketQueryError(format!(
@@ -201,7 +201,7 @@ mod qfunctions {
             _ => None,
         };
 
-        let buckets = match ds.get_buckets() {
+        let buckets = match ds.get_buckets(1) {
             Ok(buckets) => buckets,
             Err(e) => {
                 return Err(QueryError::BucketQueryError(format!(

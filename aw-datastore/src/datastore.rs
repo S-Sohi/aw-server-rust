@@ -1,24 +1,19 @@
-use std::collections::HashMap;
-
-use aw_models::Member;
-use aw_models::PublicUser;
-use aw_models::TeamConfiguration;
-use aw_models::TeamRequestModel;
-use aw_models::TeamUserModel;
-use chrono::DateTime;
-use chrono::Duration;
-use chrono::Utc;
-
-use rusqlite::Connection;
-
-use rusqlite::MappedRows;
-use serde_json::value::Value;
-
 use aw_models::Bucket;
 use aw_models::BucketMetadata;
 use aw_models::Event;
+use aw_models::Member;
+use aw_models::PublicUser;
 use aw_models::Team;
+use aw_models::TeamConfiguration;
+use aw_models::TeamRequestModel;
+use aw_models::TeamUserModel;
 use aw_models::User;
+use chrono::DateTime;
+use chrono::Duration;
+use chrono::Utc;
+use rusqlite::Connection;
+use serde_json::value::Value;
+use std::collections::HashMap;
 
 use rusqlite::params;
 use rusqlite::types::ToSql;
@@ -85,10 +80,7 @@ fn _migrate_v0_to_v1(conn: &Connection) {
         "
         CREATE TABLE IF NOT EXISTS buckets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
             type TEXT NOT NULL,
-            client TEXT NOT NULL,
-            hostname TEXT NOT NULL,
             created TEXT NOT NULL
         )",
         &[] as &[&dyn ToSql],
@@ -207,7 +199,7 @@ fn _migrate_new_version(conn: &Connection) {
         &[] as &[&dyn ToSql],
     )
     .expect("Failed to create User table");
-    
+
     // Should force password change after first login
     conn.execute(
     "INSERT INTO Users (username, email, name, lastname, password , role) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -308,8 +300,7 @@ impl DatastoreInstance {
     fn get_stored_buckets(&mut self, conn: &Connection) -> Result<(), DatastoreError> {
         let mut stmt = match conn.prepare(
             "
-            SELECT  buckets.id, buckets.name, buckets.type, buckets.client,
-                    buckets.hostname, buckets.created,
+            SELECT  buckets.id, buckets.type, buckets.created,
                     min(events.starttime), max(events.endtime),
                     buckets.data, buckets.user_id
             FROM buckets
@@ -325,7 +316,7 @@ impl DatastoreInstance {
             }
         };
         let buckets = match stmt.query_map(&[] as &[&dyn ToSql], |row| {
-            let opt_start_ns: Option<i64> = row.get(6)?;
+            let opt_start_ns: Option<i64> = row.get(3)?;
             let opt_start = match opt_start_ns {
                 Some(starttime_ns) => {
                     let seconds: i64 = starttime_ns / 1_000_000_000;
@@ -335,7 +326,7 @@ impl DatastoreInstance {
                 None => None,
             };
 
-            let opt_end_ns: Option<i64> = row.get(7)?;
+            let opt_end_ns: Option<i64> = row.get(4)?;
             let opt_end = match opt_end_ns {
                 Some(endtime_ns) => {
                     let seconds: i64 = endtime_ns / 1_000_000_000;
@@ -346,7 +337,7 @@ impl DatastoreInstance {
             };
 
             // If data column is not set (possible on old installations), use an empty map as default
-            let data_str: String = row.get(8)?;
+            let data_str: String = row.get(5)?;
             let data_json = match serde_json::from_str(&data_str) {
                 Ok(data) => data,
                 Err(e) => {
@@ -358,11 +349,8 @@ impl DatastoreInstance {
 
             Ok(Bucket {
                 bid: row.get(0)?,
-                id: row.get(1)?,
-                _type: row.get(2)?,
-                client: row.get(3)?,
-                hostname: row.get(4)?,
-                created: row.get(5)?,
+                _type: row.get(1)?,
+                created: row.get(2)?,
                 data: data_json,
                 metadata: BucketMetadata {
                     start: opt_start,
@@ -383,7 +371,7 @@ impl DatastoreInstance {
         for bucket in buckets {
             match bucket {
                 Ok(b) => {
-                    self.buckets_cache.insert(b.id.clone(), b.clone());
+                    self.buckets_cache.insert(b.bid.to_string(), b.clone());
                 }
                 Err(e) => {
                     return Err(DatastoreError::InternalError(format!(
@@ -419,15 +407,24 @@ impl DatastoreInstance {
         &mut self,
         conn: &Connection,
         mut bucket: Bucket,
-    ) -> Result<(), DatastoreError> {
+    ) -> Result<i64, DatastoreError> {
         bucket.created = match bucket.created {
             Some(created) => Some(created),
             None => Some(Utc::now()),
         };
+
+        let previous_bucket_id: i64 = match self.get_bucket_from_database(conn, bucket.clone()) {
+            Ok(bucket_id) => bucket_id,
+            Err(_) => -1,
+        };
+        if previous_bucket_id != -1 {
+            return Ok(previous_bucket_id);
+        }
+
         let mut stmt = match conn.prepare(
             "
-                INSERT INTO buckets (name, type, client, hostname, created, data, user_id)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                INSERT INTO buckets (type, created, data, user_id)
+                VALUES (?1, ?2, ?3, ?4)",
         ) {
             Ok(buckets) => buckets,
             Err(err) => {
@@ -438,38 +435,34 @@ impl DatastoreInstance {
         };
         let data = serde_json::to_string(&bucket.data).unwrap();
         let res = stmt.execute([
-            &bucket.id,
             &bucket._type,
-            &bucket.client,
-            &bucket.hostname,
             &bucket.created as &dyn ToSql,
             &data,
             &bucket.user_id,
         ]);
-
         match res {
             Ok(_) => {
-                info!("Created bucket {}", bucket.id);
+                info!("Created bucket {}", bucket.bid);
                 // Get and set rowid
                 let rowid: i64 = conn.last_insert_rowid();
-                bucket.bid = Some(rowid);
                 // Take out events from struct before caching
                 let events = bucket.events;
                 bucket.events = None;
+                bucket.bid = rowid;
                 // Cache bucket
-                self.buckets_cache.insert(bucket.id.clone(), bucket.clone());
+                self.buckets_cache.insert(rowid.to_string(), bucket.clone());
                 // Insert events
                 if let Some(events) = events {
-                    self.insert_events(conn, &bucket.id, events.take_inner())?;
+                    self.insert_events(conn, bucket.bid, events.take_inner())?;
                     bucket.events = None;
                 }
-                Ok(())
+                Ok(rowid)
             }
             // FIXME: This match is ugly, is it possible to write it in a cleaner way?
             Err(err) => match err {
                 rusqlite::Error::SqliteFailure { 0: sqlerr, 1: _ } => match sqlerr.code {
                     rusqlite::ErrorCode::ConstraintViolation => {
-                        Err(DatastoreError::BucketAlreadyExists(bucket.id.to_string()))
+                        Err(DatastoreError::BucketAlreadyExists(bucket.bid.to_string()))
                     }
                     _ => Err(DatastoreError::InternalError(format!(
                         "Failed to execute create_bucket SQL statement: {err}"
@@ -482,10 +475,71 @@ impl DatastoreInstance {
         }
     }
 
+    pub fn get_bucket_from_database(
+        &mut self,
+        conn: &Connection,
+        bucket: Bucket,
+    ) -> Result<i64, DatastoreError> {
+        let mut stmt = match conn.prepare(
+            "
+                SELECT b.id FROM buckets b WHERE b.user_id=?1 and b.type=?2",
+        ) {
+            Ok(buckets) => buckets,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare create_bucket SQL statement: {err}"
+                )))
+            }
+        };
+        let bucket_id = match stmt.query_row([bucket.user_id.to_string(), bucket._type], |row| {
+            Ok(row.get(0)?)
+        }) {
+            Ok(bucket_id) => bucket_id,
+            Err(err) => -1,
+        };
+        Ok(bucket_id)
+    }
+
+    pub fn get_user_bucket_ids(
+        &mut self,
+        conn: &Connection,
+        user_id:i32
+    ) -> Result<Vec<i64>, DatastoreError> {
+        let mut stmt = match conn.prepare(
+            "
+                SELECT b.id FROM buckets b WHERE b.user_id=?1",
+        ) {
+            Ok(buckets) => buckets,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare create_bucket SQL statement: {err}"
+                )))
+            }
+        };
+        let bucket_ids = match stmt.query_map([user_id.to_string()], |row| {
+            Ok(row.get::<usize, i64>(0)?)
+        }) {
+            Ok(bucket_ids) => bucket_ids,
+            Err(err) => {
+                return Err(DatastoreError::InternalError(format!(
+                    "Failed to prepare create_bucket SQL statement: {err}"
+                )))
+            }
+        };
+        let mut ids: Vec<i64> = Vec::new();
+        for id in bucket_ids.collect::<Vec<Result<i64, rusqlite::Error>>>(){
+            match id {
+                Ok(id) => ids.push(id),
+                Err(_) => todo!("error")
+            }
+        }
+        Ok(ids)
+    }
+
     pub fn delete_bucket(
         &mut self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
     ) -> Result<(), DatastoreError> {
         let bucket = (self.get_bucket(bucket_id))?;
         // Delete all events in bucket
@@ -496,7 +550,7 @@ impl DatastoreInstance {
         // Delete bucket itself
         match conn.execute("DELETE FROM buckets WHERE id = ?1", [&bucket.bid]) {
             Ok(_) => {
-                self.buckets_cache.remove(bucket_id);
+                self.buckets_cache.remove(&bucket_id.to_string());
                 Ok(())
             }
             Err(err) => match err {
@@ -511,22 +565,28 @@ impl DatastoreInstance {
         }
     }
 
-    pub fn get_bucket(&self, bucket_id: &str) -> Result<Bucket, DatastoreError> {
-        let cached_bucket = self.buckets_cache.get(bucket_id);
+    pub fn get_bucket(&self, bucket_id: i64) -> Result<Bucket, DatastoreError> {
+        let cached_bucket = self.buckets_cache.get(&bucket_id.to_string());
         match cached_bucket {
             Some(bucket) => Ok(bucket.clone()),
             None => Err(DatastoreError::NoSuchBucket(bucket_id.to_string())),
         }
     }
 
-    pub fn get_buckets(&self) -> HashMap<String, Bucket> {
-        self.buckets_cache.clone()
+    pub fn get_buckets(&mut self, conn: &Connection, user_id: i32) -> HashMap<String, Bucket> {
+        let user_bucket_ids = self.get_user_bucket_ids(conn, user_id).unwrap();
+        let mut user_buckets: HashMap<String, Bucket> = HashMap::new();
+        for id in user_bucket_ids{
+            let bucket = self.buckets_cache.get(&id.to_string()).unwrap();
+            user_buckets.insert(id.to_string(), bucket.clone());
+        };
+        user_buckets
     }
 
     pub fn insert_events(
         &mut self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
         mut events: Vec<Event>,
     ) -> Result<Vec<Event>, DatastoreError> {
         let mut bucket = self.get_bucket(bucket_id)?;
@@ -556,7 +616,7 @@ impl DatastoreInstance {
             let endtime_nanos = starttime_nanos + duration_nanos;
             let data = serde_json::to_string(&event.data).unwrap();
             let res = stmt.execute([
-                &bucket.bid.unwrap(),
+                &bucket.bid,
                 &event.id as &dyn ToSql,
                 &starttime_nanos,
                 &endtime_nanos,
@@ -582,7 +642,7 @@ impl DatastoreInstance {
     pub fn delete_events_by_id(
         &self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
         event_ids: Vec<i64>,
     ) -> Result<(), DatastoreError> {
         let bucket = self.get_bucket(bucket_id)?;
@@ -599,7 +659,7 @@ impl DatastoreInstance {
             }
         };
         for id in event_ids {
-            let res = stmt.execute([&bucket.bid.unwrap(), &id as &dyn ToSql]);
+            let res = stmt.execute([&bucket.bid, &id as &dyn ToSql]);
             match res {
                 Ok(_) => {}
                 Err(err) => {
@@ -645,14 +705,15 @@ impl DatastoreInstance {
         }
         /* Update buchets_cache if start or end has been updated */
         if update {
-            self.buckets_cache.insert(bucket.id.clone(), bucket.clone());
+            self.buckets_cache
+                .insert(bucket.bid.to_string(), bucket.clone());
         }
     }
 
     pub fn replace_last_event(
         &mut self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
         event: &Event,
     ) -> Result<(), DatastoreError> {
         let mut bucket = self.get_bucket(bucket_id)?;
@@ -684,7 +745,7 @@ impl DatastoreInstance {
         let endtime_nanos = starttime_nanos + duration_nanos;
         let data = serde_json::to_string(&event.data).unwrap();
         match stmt.execute([
-            &bucket.bid.unwrap(),
+            &bucket.bid,
             &starttime_nanos,
             &endtime_nanos,
             &data as &dyn ToSql,
@@ -702,16 +763,16 @@ impl DatastoreInstance {
     pub fn heartbeat(
         &mut self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
         heartbeat: Event,
         pulsetime: f64,
         last_heartbeat: &mut HashMap<String, Option<Event>>,
     ) -> Result<Event, DatastoreError> {
         self.get_bucket(bucket_id)?;
-        if !last_heartbeat.contains_key(bucket_id) {
+        if !last_heartbeat.contains_key(&bucket_id.to_string()) {
             last_heartbeat.insert(bucket_id.to_string(), None);
         }
-        let last_event = match last_heartbeat.remove(bucket_id).unwrap() {
+        let last_event = match last_heartbeat.remove(&bucket_id.to_string()).unwrap() {
             // last heartbeat is in cache
             Some(last_event) => last_event,
             None => {
@@ -746,7 +807,7 @@ impl DatastoreInstance {
     pub fn get_event(
         &mut self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
         event_id: i64,
     ) -> Result<Event, DatastoreError> {
         let bucket = self.get_bucket(bucket_id)?;
@@ -769,7 +830,7 @@ impl DatastoreInstance {
         };
 
         // TODO: Refactor to share row-parsing logic with get_events
-        let row = match stmt.query_row([&bucket.bid.unwrap(), &event_id], |row| {
+        let row = match stmt.query_row([&bucket.bid, &event_id], |row| {
             let id = row.get(0)?;
             let starttime_ns: i64 = row.get(1)?;
             let endtime_ns: i64 = row.get(2)?;
@@ -803,7 +864,7 @@ impl DatastoreInstance {
     pub fn get_events(
         &mut self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
         starttime_opt: Option<DateTime<Utc>>,
         endtime_opt: Option<DateTime<Utc>>,
         limit_opt: Option<u64>,
@@ -850,7 +911,7 @@ impl DatastoreInstance {
 
         let rows = match stmt.query_map(
             [
-                &bucket.bid.unwrap(),
+                &bucket.bid,
                 &starttime_filter_ns,
                 &endtime_filter_ns,
                 &limit,
@@ -903,7 +964,7 @@ impl DatastoreInstance {
     pub fn get_event_count(
         &self,
         conn: &Connection,
-        bucket_id: &str,
+        bucket_id: i64,
         starttime_opt: Option<DateTime<Utc>>,
         endtime_opt: Option<DateTime<Utc>>,
     ) -> Result<i64, DatastoreError> {
@@ -938,11 +999,7 @@ impl DatastoreInstance {
         };
 
         let count = match stmt.query_row(
-            [
-                &bucket.bid.unwrap(),
-                &starttime_filter_ns,
-                &endtime_filter_ns,
-            ],
+            [&bucket.bid, &starttime_filter_ns, &endtime_filter_ns],
             |row| row.get(0),
         ) {
             Ok(count) => count,
@@ -1408,18 +1465,18 @@ impl DatastoreInstance {
     pub fn update_configuration(
         &self,
         conn: &Connection,
-        team_id:i32,
-        apps:String
+        team_id: i32,
+        apps: String,
     ) -> Result<bool, DatastoreError> {
-        let mut stmt = match conn.prepare("UPDATE TeamConfiguration set apps = ?1 where teamId = ?2")
-        {
-            Ok(stmt) => stmt,
-            Err(err) => {
-                return Err(DatastoreError::InternalError(format!(
-                    "Failed to prepare get_value SQL statement: {err}"
-                )))
-            }
-        };
+        let mut stmt =
+            match conn.prepare("UPDATE TeamConfiguration set apps = ?1 where teamId = ?2") {
+                Ok(stmt) => stmt,
+                Err(err) => {
+                    return Err(DatastoreError::InternalError(format!(
+                        "Failed to prepare get_value SQL statement: {err}"
+                    )))
+                }
+            };
         match stmt.execute(params![apps, team_id]) {
             Ok(r) => Ok(true),
             Err(err) => Err(DatastoreError::InternalError(
@@ -1431,18 +1488,18 @@ impl DatastoreInstance {
     pub fn add_configuration(
         &self,
         conn: &Connection,
-        team_id:i32,
-        apps:String
+        team_id: i32,
+        apps: String,
     ) -> Result<bool, DatastoreError> {
-        let mut stmt = match conn.prepare("INSERT INTO TeamConfiguration (teamId, apps) VALUES (?1, ?2)")
-        {
-            Ok(stmt) => stmt,
-            Err(err) => {
-                return Err(DatastoreError::InternalError(format!(
-                    "Failed to prepare get_value SQL statement: {err}"
-                )))
-            }
-        };
+        let mut stmt =
+            match conn.prepare("INSERT INTO TeamConfiguration (teamId, apps) VALUES (?1, ?2)") {
+                Ok(stmt) => stmt,
+                Err(err) => {
+                    return Err(DatastoreError::InternalError(format!(
+                        "Failed to prepare get_value SQL statement: {err}"
+                    )))
+                }
+            };
         match stmt.execute(params![team_id, apps]) {
             Ok(r) => Ok(true),
             Err(err) => Err(DatastoreError::InternalError(
@@ -1471,20 +1528,18 @@ impl DatastoreInstance {
         let config = match stmt.query_row(params![team_id], |row| {
             let id = row.get(0)?;
             let team_id = row.get(1)?;
-            let apps_string = row.get::<usize,String>(2)?;
-            let apps:Vec<String>;
-            if apps_string.len() > 0{
-                apps = apps_string.split(',').map(|s| s.to_string())
-                .collect();
-            }
-            else{
+            let apps_string = row.get::<usize, String>(2)?;
+            let apps: Vec<String>;
+            if apps_string.len() > 0 {
+                apps = apps_string.split(',').map(|s| s.to_string()).collect();
+            } else {
                 apps = Vec::new();
             }
-            return Ok(TeamConfiguration{
-                id:id,
-                team_id:team_id,
-                apps:apps
-            })
+            return Ok(TeamConfiguration {
+                id: id,
+                team_id: team_id,
+                apps: apps,
+            });
         }) {
             Ok(config) => config,
             Err(err) => {
@@ -1495,5 +1550,4 @@ impl DatastoreInstance {
         };
         Ok(config)
     }
-    
 }

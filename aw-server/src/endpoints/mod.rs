@@ -103,19 +103,19 @@ fn root_manifest(state: &State<ServerState>) -> Option<(ContentType, Vec<u8>)> {
     get_file("manifest.json".into(), state)
 }
 
-#[get("/")]
-fn server_info(config: &State<AWConfig>, state: &State<ServerState>) -> Json<Info> {
-    #[allow(clippy::or_fun_call)]
-    let hostname = gethostname().into_string().unwrap_or("unknown".to_string());
-    const VERSION: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
+// #[get("/")]
+// fn server_info(config: &State<AWConfig>, state: &State<ServerState>) -> Json<Info> {
+//     #[allow(clippy::or_fun_call)]
+//     let hostname = gethostname().into_string().unwrap_or("unknown".to_string());
+//     const VERSION: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
 
-    Json(Info {
-        hostname,
-        version: format!("v{} (rust)", VERSION.unwrap_or("(unknown)")),
-        testing: config.testing,
-        device_id: state.device_id.clone(),
-    })
-}
+//     Json(Info {
+//         hostname,
+//         version: format!("v{} (rust)", VERSION.unwrap_or("(unknown)")),
+//         testing: config.testing,
+//         device_id: state.device_id.clone(),
+//     })
+// }
 
 fn get_file(file: PathBuf, state: &State<ServerState>) -> Option<(ContentType, Vec<u8>)> {
     let asset = state.asset_resolver.resolve(&file.display().to_string())?;
@@ -159,7 +159,7 @@ pub fn build_rocket(server_state: ServerState, config: AWConfig) -> rocket::Rock
                 root_manifest
             ],
         )
-        .mount("/api/0/info", routes![server_info])
+        // .mount("/api/0/info", routes![server_info])
         .mount(
             "/api/0/buckets",
             routes![

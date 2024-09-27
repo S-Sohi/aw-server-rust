@@ -51,11 +51,8 @@ mod import {
         let bucket_rows = match stmt.query_map(&[] as &[&dyn ToSql], |row| {
             Ok(Bucket {
                 bid: row.get(0)?,
-                id: row.get(1)?,
-                _type: row.get(2)?,
-                client: row.get(3)?,
-                hostname: row.get(4)?,
-                created: row.get(5)?,
+                _type: row.get(1)?,
+                created: row.get(4)?,
                 data: json_map! {},
                 events: None,
                 last_updated: None,
@@ -170,21 +167,21 @@ mod import {
             println!("Importing legacy bucket: {bucket:?}");
             match new_ds.create_bucket(new_conn, bucket.clone()) {
                 Ok(_) => (),
-                Err(err) => panic!("Failed to create bucket '{}': {:?}", bucket.id, err),
+                Err(err) => panic!("Failed to create bucket '{}': {:?}", bucket.bid, err),
             };
-            let events = get_legacy_events(&legacy_conn, bucket.bid.unwrap())?;
+            let events = get_legacy_events(&legacy_conn, bucket.bid)?;
             let num_events = events.len(); // Save len before lending events to insert_events
-            println!("Importing {} events for {}", num_events, bucket.id);
-            match new_ds.insert_events(new_conn, &bucket.id, events) {
+            println!("Importing {} events for {}", num_events, bucket.bid);
+            match new_ds.insert_events(new_conn, bucket.bid, events) {
                 Ok(_) => (),
                 Err(err) => panic!(
                     "Failed to insert events to bucket '{}': {:?}",
-                    bucket.id, err
+                    bucket.bid, err
                 ),
             };
             //assert_eq!(new_ds.get_events(new_conn, &bucket.id, None, None, None).unwrap().len(), num_events);
         }
-        assert_eq!(new_ds.get_buckets().len(), buckets.len());
+        assert_eq!(new_ds.get_buckets(new_conn,1).len(), buckets.len());
         Ok(())
     }
 
@@ -202,12 +199,12 @@ mod import {
             ds.ensure_legacy_import(&new_conn).unwrap(),
             "Failed to ensure legacy import"
         );
-        let buckets = ds.get_buckets();
+        let buckets = ds.get_buckets(&new_conn, 1);
         assert!(!buckets.is_empty());
         let mut num_events = 0;
         for (bucket_id, _bucket) in buckets {
             let events = ds
-                .get_events(&new_conn, &bucket_id, None, None, Some(1000))
+                .get_events(&new_conn, bucket_id.parse().unwrap(), None, None, Some(1000))
                 .unwrap();
             num_events += events.len();
         }

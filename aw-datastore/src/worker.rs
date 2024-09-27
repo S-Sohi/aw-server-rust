@@ -74,20 +74,20 @@ pub enum Response {
 #[derive(Debug, Clone)]
 pub enum Command {
     CreateBucket(Bucket),
-    DeleteBucket(String),
-    GetBucket(String),
-    GetBuckets(),
-    InsertEvents(String, Vec<Event>),
-    Heartbeat(String, Event, f64),
-    GetEvent(String, i64),
+    DeleteBucket(i64),
+    GetBucket(i64),
+    GetBuckets(i32),
+    InsertEvents(i64, Vec<Event>),
+    Heartbeat(i64, Event, f64),
+    GetEvent(i64, i64),
     GetEvents(
-        String,
+        i64,
         Option<DateTime<Utc>>,
         Option<DateTime<Utc>>,
         Option<u64>,
     ),
-    GetEventCount(String, Option<DateTime<Utc>>, Option<DateTime<Utc>>),
-    DeleteEventsById(String, Vec<i64>),
+    GetEventCount(i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+    DeleteEventsById(i64, Vec<i64>),
     ForceCommit(),
     GetKeyValues(String),
     GetKeyValue(String),
@@ -108,7 +108,7 @@ pub enum Command {
     GetUserTeams(i32),
     AddTeamConfiguration(i32, String),
     UpdateTeamConfiguration(i32, String),
-    GetTeamConfiguration(i32)
+    GetTeamConfiguration(i32),
 }
 
 fn _unwrap_response(
@@ -240,36 +240,36 @@ impl DatastoreWorker {
     ) -> Result<Response, DatastoreError> {
         match request {
             Command::CreateBucket(bucket) => match ds.create_bucket(tx, bucket) {
+                Ok(id) => {
+                    self.commit = true;
+                    Ok(Response::Count(id))
+                }
+                Err(e) => Err(e),
+            },
+            Command::DeleteBucket(bucket_id) => match ds.delete_bucket(tx, bucket_id) {
                 Ok(_) => {
                     self.commit = true;
                     Ok(Response::Empty())
                 }
                 Err(e) => Err(e),
             },
-            Command::DeleteBucket(bucketname) => match ds.delete_bucket(tx, &bucketname) {
-                Ok(_) => {
-                    self.commit = true;
-                    Ok(Response::Empty())
-                }
-                Err(e) => Err(e),
-            },
-            Command::GetBucket(bucketname) => match ds.get_bucket(&bucketname) {
+            Command::GetBucket(bucket_id) => match ds.get_bucket(bucket_id) {
                 Ok(b) => Ok(Response::Bucket(b)),
                 Err(e) => Err(e),
             },
-            Command::GetBuckets() => Ok(Response::BucketMap(ds.get_buckets())),
-            Command::InsertEvents(bucketname, events) => {
-                match ds.insert_events(tx, &bucketname, events) {
+            Command::GetBuckets(user_id) => Ok(Response::BucketMap(ds.get_buckets(tx, user_id))),
+            Command::InsertEvents(bucket_id, events) => {
+                match ds.insert_events(tx, bucket_id, events) {
                     Ok(events) => {
                         self.uncommitted_events += events.len();
-                        self.last_heartbeat.insert(bucketname.to_string(), None); // invalidate last_heartbeat cache
+                        self.last_heartbeat.insert(bucket_id.to_string(), None); // invalidate last_heartbeat cache
                         Ok(Response::EventList(events))
                     }
                     Err(e) => Err(e),
                 }
             }
-            Command::Heartbeat(bucketname, event, pulsetime) => {
-                match ds.heartbeat(tx, &bucketname, event, pulsetime, &mut self.last_heartbeat) {
+            Command::Heartbeat(bucket_id, event, pulsetime) => {
+                match ds.heartbeat(tx, bucket_id, event, pulsetime, &mut self.last_heartbeat) {
                     Ok(e) => {
                         self.uncommitted_events += 1;
                         Ok(Response::Event(e))
@@ -277,26 +277,24 @@ impl DatastoreWorker {
                     Err(e) => Err(e),
                 }
             }
-            Command::GetEvent(bucketname, event_id) => {
-                match ds.get_event(tx, &bucketname, event_id) {
-                    Ok(el) => Ok(Response::Event(el)),
-                    Err(e) => Err(e),
-                }
-            }
-            Command::GetEvents(bucketname, starttime_opt, endtime_opt, limit_opt) => {
-                match ds.get_events(tx, &bucketname, starttime_opt, endtime_opt, limit_opt) {
+            Command::GetEvent(bucket_id, event_id) => match ds.get_event(tx, bucket_id, event_id) {
+                Ok(el) => Ok(Response::Event(el)),
+                Err(e) => Err(e),
+            },
+            Command::GetEvents(bucket_id, starttime_opt, endtime_opt, limit_opt) => {
+                match ds.get_events(tx, bucket_id, starttime_opt, endtime_opt, limit_opt) {
                     Ok(el) => Ok(Response::EventList(el)),
                     Err(e) => Err(e),
                 }
             }
-            Command::GetEventCount(bucketname, starttime_opt, endtime_opt) => {
-                match ds.get_event_count(tx, &bucketname, starttime_opt, endtime_opt) {
+            Command::GetEventCount(bucket_id, starttime_opt, endtime_opt) => {
+                match ds.get_event_count(tx, bucket_id, starttime_opt, endtime_opt) {
                     Ok(n) => Ok(Response::Count(n)),
                     Err(e) => Err(e),
                 }
             }
-            Command::DeleteEventsById(bucketname, event_ids) => {
-                match ds.delete_events_by_id(tx, &bucketname, event_ids) {
+            Command::DeleteEventsById(bucket_id, event_ids) => {
+                match ds.delete_events_by_id(tx, bucket_id, event_ids) {
                     Ok(()) => Ok(Response::Empty()),
                     Err(e) => Err(e),
                 }
@@ -381,17 +379,21 @@ impl DatastoreWorker {
                 Err(e) => Err(e),
             },
 
-            Command::AddTeamConfiguration(team_id, apps) => match ds.add_configuration(tx, team_id, apps) {
-                Ok(teams) => Ok(Response::Empty()),
-                Err(e) => Err(e),
-            },
+            Command::AddTeamConfiguration(team_id, apps) => {
+                match ds.add_configuration(tx, team_id, apps) {
+                    Ok(teams) => Ok(Response::Empty()),
+                    Err(e) => Err(e),
+                }
+            }
 
-            Command::UpdateTeamConfiguration(team_id, apps) => match ds.update_configuration(tx, team_id, apps) {
-                Ok(teams) => Ok(Response::Empty()),
-                Err(e) => Err(e),
-            },
+            Command::UpdateTeamConfiguration(team_id, apps) => {
+                match ds.update_configuration(tx, team_id, apps) {
+                    Ok(teams) => Ok(Response::Empty()),
+                    Err(e) => Err(e),
+                }
+            }
 
-            Command::GetTeamConfiguration(team_id) => match ds.get_configuration(tx, team_id, ) {
+            Command::GetTeamConfiguration(team_id) => match ds.get_configuration(tx, team_id) {
                 Ok(config) => Ok(Response::TeamConfiguration(config)),
                 Err(e) => Err(e),
             },
@@ -425,17 +427,20 @@ impl Datastore {
         Datastore { requester }
     }
 
-    pub fn create_bucket(&self, bucket: &Bucket) -> Result<(), DatastoreError> {
+    pub fn create_bucket(&self, bucket: &Bucket) -> Result<i64, DatastoreError> {
         let cmd = Command::CreateBucket(bucket.clone());
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
-            Ok(_) => Ok(()),
+            Ok(r) => match r {
+                Response::Count(id) => Ok(id),
+                _ => Ok(-1),
+            },
             Err(e) => Err(e),
         }
     }
 
-    pub fn delete_bucket(&self, bucket_id: &str) -> Result<(), DatastoreError> {
-        let cmd = Command::DeleteBucket(bucket_id.to_string());
+    pub fn delete_bucket(&self, bucket_id: i64) -> Result<(), DatastoreError> {
+        let cmd = Command::DeleteBucket(bucket_id);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -446,8 +451,8 @@ impl Datastore {
         }
     }
 
-    pub fn get_bucket(&self, bucket_id: &str) -> Result<Bucket, DatastoreError> {
-        let cmd = Command::GetBucket(bucket_id.to_string());
+    pub fn get_bucket(&self, bucket_id: i64) -> Result<Bucket, DatastoreError> {
+        let cmd = Command::GetBucket(bucket_id);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -458,8 +463,8 @@ impl Datastore {
         }
     }
 
-    pub fn get_buckets(&self) -> Result<HashMap<String, Bucket>, DatastoreError> {
-        let cmd = Command::GetBuckets();
+    pub fn get_buckets(&self, user_id: i32) -> Result<HashMap<String, Bucket>, DatastoreError> {
+        let cmd = Command::GetBuckets(user_id);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -474,10 +479,10 @@ impl Datastore {
 
     pub fn insert_events(
         &self,
-        bucket_id: &str,
+        bucket_id: i64,
         events: &[Event],
     ) -> Result<Vec<Event>, DatastoreError> {
-        let cmd = Command::InsertEvents(bucket_id.to_string(), events.to_vec());
+        let cmd = Command::InsertEvents(bucket_id, events.to_vec());
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -490,11 +495,11 @@ impl Datastore {
 
     pub fn heartbeat(
         &self,
-        bucket_id: &str,
+        bucket_id: i64,
         heartbeat: Event,
         pulsetime: f64,
     ) -> Result<Event, DatastoreError> {
-        let cmd = Command::Heartbeat(bucket_id.to_string(), heartbeat, pulsetime);
+        let cmd = Command::Heartbeat(bucket_id, heartbeat, pulsetime);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -505,8 +510,8 @@ impl Datastore {
         }
     }
 
-    pub fn get_event(&self, bucket_id: &str, event_id: i64) -> Result<Event, DatastoreError> {
-        let cmd = Command::GetEvent(bucket_id.to_string(), event_id);
+    pub fn get_event(&self, bucket_id: i64, event_id: i64) -> Result<Event, DatastoreError> {
+        let cmd = Command::GetEvent(bucket_id, event_id);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -519,12 +524,12 @@ impl Datastore {
 
     pub fn get_events(
         &self,
-        bucket_id: &str,
+        bucket_id: i64,
         starttime_opt: Option<DateTime<Utc>>,
         endtime_opt: Option<DateTime<Utc>>,
         limit_opt: Option<u64>,
     ) -> Result<Vec<Event>, DatastoreError> {
-        let cmd = Command::GetEvents(bucket_id.to_string(), starttime_opt, endtime_opt, limit_opt);
+        let cmd = Command::GetEvents(bucket_id, starttime_opt, endtime_opt, limit_opt);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -537,11 +542,11 @@ impl Datastore {
 
     pub fn get_event_count(
         &self,
-        bucket_id: &str,
+        bucket_id: i64,
         starttime_opt: Option<DateTime<Utc>>,
         endtime_opt: Option<DateTime<Utc>>,
     ) -> Result<i64, DatastoreError> {
-        let cmd = Command::GetEventCount(bucket_id.to_string(), starttime_opt, endtime_opt);
+        let cmd = Command::GetEventCount(bucket_id, starttime_opt, endtime_opt);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {
@@ -554,10 +559,10 @@ impl Datastore {
 
     pub fn delete_events_by_id(
         &self,
-        bucket_id: &str,
+        bucket_id: i64,
         event_ids: Vec<i64>,
     ) -> Result<(), DatastoreError> {
-        let cmd = Command::DeleteEventsById(bucket_id.to_string(), event_ids);
+        let cmd = Command::DeleteEventsById(bucket_id, event_ids);
         let receiver = self.requester.request(cmd).unwrap();
         match receiver.collect().unwrap() {
             Ok(r) => match r {

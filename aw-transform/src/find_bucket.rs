@@ -7,17 +7,17 @@ pub fn find_bucket<'a>(
     hostname_filter: &Option<String>,
     buckets: impl IntoIterator<Item = &'a Bucket>,
 ) -> Option<String> {
-    for bucket in buckets {
-        if bucket.id.starts_with(bucket_filter) {
-            if let Some(hostname) = hostname_filter {
-                if hostname == &bucket.hostname {
-                    return Some(bucket.id.to_string());
-                }
-            } else {
-                return Some(bucket.id.to_string());
-            }
-        }
-    }
+    // for bucket in buckets {
+    //     if bucket.id.starts_with(bucket_filter) {
+    //         if let Some(hostname) = hostname_filter {
+    //             if hostname == &bucket.hostname {
+    //                 return Some(bucket.id.to_string());
+    //             }
+    //         } else {
+    //             return Some(bucket.id.to_string());
+    //         }
+    //     }
+    // }
     None
 }
 

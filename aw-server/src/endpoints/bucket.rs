@@ -23,24 +23,25 @@ mod jwt;
 use crate::endpoints::util::BucketsExportRocket;
 use crate::endpoints::{HttpErrorJson, ServerState};
 
-#[get("/")]
+#[get("/<user_id>")]
 pub fn buckets_get(
     state: &State<ServerState>,
-) -> Result<Json<HashMap<String, Bucket>>, HttpErrorJson> {
+    user_id: i32
+) -> Result<Json<Vec<Bucket>>, HttpErrorJson> {
     let datastore = endpoints_get_lock!(state.datastore);
-    match datastore.get_buckets() {
-        Ok(bucketlist) => Ok(Json(bucketlist)),
+    match datastore.get_buckets(user_id) {
+        Ok(bucketlist) => Ok(Json(bucketlist.values().cloned().collect())),
         Err(err) => Err(err.into()),
     }
 }
 
-#[get("/<bucket_id>")]
+#[get("/<bucket_id>/info")]
 pub fn bucket_get(
-    bucket_id: &str,
+    bucket_id: i64,
     state: &State<ServerState>,
 ) -> Result<Json<Bucket>, HttpErrorJson> {
     let datastore = endpoints_get_lock!(state.datastore);
-    match datastore.get_bucket(&bucket_id) {
+    match datastore.get_bucket(bucket_id) {
         Ok(bucket) => Ok(Json(bucket)),
         Err(e) => Err(e.into()),
     }
@@ -68,61 +69,49 @@ impl<'r> FromRequest<'r> for Token {
     }
 }
 
-#[post("/<bucket_id>", data = "<message>", format = "application/json")]
+#[post("/", data = "<message>", format = "application/json")]
 pub fn bucket_new(
-    bucket_id: &str,
     message: Json<PublicBucket>,
     state: &State<ServerState>,
     token: Token,
-) -> Result<(), HttpErrorJson> {
-    let mut sent_bucket = message.into_inner();
-    let tokenString = token.clone().0;
-    let userId = match validate_jwt(&tokenString) {
-        Ok(userId) => userId,
+) -> Result<Json<i64>, HttpErrorJson> {
+    let sent_bucket = message.into_inner();
+    let token_string = token.clone().0;
+    let user_id = match validate_jwt(&token_string) {
+        Ok(user_id) => user_id,
         Err(_) => -1,
     };
-    if userId == -1 {
+    if user_id == -1 {
         return Err(HttpErrorJson::new(
             Status::Forbidden,
             "Authentication is required".to_string(),
         ));
     }
-    let mut bucket = Bucket {
+    let bucket = Bucket {
         bid: sent_bucket.bid,
-        id: sent_bucket.id,
         _type: sent_bucket._type,
-        client: sent_bucket.client,
-        hostname: sent_bucket.hostname,
         created: sent_bucket.created,
         data: sent_bucket.data,
         metadata: sent_bucket.metadata,
         events: sent_bucket.events,
         last_updated: sent_bucket.last_updated,
-        user_id: userId,
+        user_id: user_id,
     };
-
-    if bucket.id != bucket_id {
-        bucket.id = bucket_id.to_string();
-    }
-    if bucket.hostname == "!local" {
-        bucket.hostname = gethostname()
-            .into_string()
-            .unwrap_or_else(|_| "unknown".to_string());
-        bucket
-            .data
-            .insert("device_id".to_string(), state.device_id.clone().into());
-    }
     let datastore = endpoints_get_lock!(state.datastore);
     let ret = datastore.create_bucket(&bucket);
-    match ret {
-        Ok(_) => Ok(()),
-        Err(err) => Err(err.into()),
-    }
+    let result = match ret {
+        Ok(id) => Ok(Json(id)),
+        Err(err) => Err(HttpErrorJson::new(
+            Status::InternalServerError,
+            "Could not create bucket".to_string(),
+        )),
+    };
+    return result;
 }
 
 #[get("/<bucket_id>/events?<start>&<end>&<limit>")]
 pub fn bucket_events_get(
-    bucket_id: &str,
+    bucket_id: i64,
     start: Option<String>,
     end: Option<String>,
     limit: Option<u64>,
@@ -165,7 +154,7 @@ pub fn bucket_events_get(
 // See: https://api.rocket.rs/master/rocket/struct.Route.html#resolving-collisions
 #[get("/<bucket_id>/events/<event_id>?<_unused..>")]
 pub fn bucket_events_get_single(
-    bucket_id: &str,
+    bucket_id: i64,
     event_id: i64,
     _unused: Option<u64>,
     state: &State<ServerState>,
@@ -180,7 +169,7 @@ pub fn bucket_events_get_single(
 
 #[post("/<bucket_id>/events", data = "<events>", format = "application/json")]
 pub fn bucket_events_create(
-    bucket_id: &str,
+    bucket_id: i64,
     events: Json<Vec<Event>>,
     state: &State<ServerState>,
 ) -> Result<Json<Vec<Event>>, HttpErrorJson> {
@@ -198,7 +187,7 @@ pub fn bucket_events_create(
     format = "application/json"
 )]
 pub fn bucket_events_heartbeat(
-    bucket_id: &str,
+    bucket_id: i64,
     heartbeat_json: Json<Event>,
     pulsetime: f64,
     state: &State<ServerState>,
@@ -213,7 +202,7 @@ pub fn bucket_events_heartbeat(
 
 #[get("/<bucket_id>/events/count")]
 pub fn bucket_event_count(
-    bucket_id: &str,
+    bucket_id: i64,
     state: &State<ServerState>,
 ) -> Result<Json<u64>, HttpErrorJson> {
     let datastore = endpoints_get_lock!(state.datastore);
@@ -226,7 +215,7 @@ pub fn bucket_event_count(
 
 #[delete("/<bucket_id>/events/<event_id>")]
 pub fn bucket_events_delete_by_id(
-    bucket_id: &str,
+    bucket_id: i64,
     event_id: i64,
     state: &State<ServerState>,
 ) -> Result<(), HttpErrorJson> {
@@ -239,7 +228,7 @@ pub fn bucket_events_delete_by_id(
 
 #[get("/<bucket_id>/export")]
 pub fn bucket_export(
-    bucket_id: &str,
+    bucket_id: i64,
     state: &State<ServerState>,
 ) -> Result<BucketsExportRocket, HttpErrorJson> {
     let datastore = endpoints_get_lock!(state.datastore);
@@ -255,13 +244,13 @@ pub fn bucket_export(
         .get_events(bucket_id, None, None, None)
         .expect("Failed to get events for bucket");
     bucket.events = Some(TryVec::new(events));
-    export.buckets.insert(bucket_id.into(), bucket);
+    export.buckets.insert(bucket_id.to_string(), bucket);
 
     Ok(export.into())
 }
 
 #[delete("/<bucket_id>")]
-pub fn bucket_delete(bucket_id: &str, state: &State<ServerState>) -> Result<(), HttpErrorJson> {
+pub fn bucket_delete(bucket_id: i64, state: &State<ServerState>) -> Result<(), HttpErrorJson> {
     let datastore = endpoints_get_lock!(state.datastore);
     match datastore.delete_bucket(bucket_id) {
         Ok(_) => Ok(()),

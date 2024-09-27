@@ -11,13 +11,9 @@ use crate::TryVec;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct Bucket {
-    #[serde(skip)]
-    pub bid: Option<i64>,
-    #[serde(default)]
-    pub id: String,
+    // #[serde(skip)]
+    pub bid: i64,
     #[serde(rename = "type")] /* type is a reserved Rust keyword */ pub _type: String,
-    pub client: String,
-    pub hostname: String,
     pub created: Option<DateTime<Utc>>,
     #[serde(default)]
     pub data: Map<String, Value>,
@@ -34,12 +30,8 @@ pub struct Bucket {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct PublicBucket {
     #[serde(skip)]
-    pub bid: Option<i64>,
-    #[serde(default)]
-    pub id: String,
+    pub bid: i64,
     #[serde(rename = "type")] /* type is a reserved Rust keyword */ pub _type: String,
-    pub client: String,
-    pub hostname: String,
     pub created: Option<DateTime<Utc>>,
     #[serde(default)]
     pub data: Map<String, Value>,
@@ -67,11 +59,8 @@ pub struct BucketsExport {
 #[test]
 fn test_bucket() {
     let b = Bucket {
-        bid: None,
-        id: "id".to_string(),
+        bid:1,
         _type: "type".to_string(),
-        client: "client".to_string(),
-        hostname: "hostname".into(),
         created: None,
         data: json_map! {},
         metadata: BucketMetadata::default(),

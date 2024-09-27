@@ -14,12 +14,12 @@ pub fn buckets_export(state: &State<ServerState>) -> Result<BucketsExportRocket,
     let mut export = BucketsExport {
         buckets: HashMap::new(),
     };
-    let mut buckets = match datastore.get_buckets() {
+    let mut buckets = match datastore.get_buckets(0) {
         Ok(buckets) => buckets,
         Err(err) => return Err(err.into()),
     };
     for (bid, mut bucket) in buckets.drain() {
-        let events = match datastore.get_events(&bid, None, None, None) {
+        let events = match datastore.get_events(bid.parse().unwrap(), None, None, None) {
             Ok(events) => events,
             Err(err) => return Err(err.into()),
         };

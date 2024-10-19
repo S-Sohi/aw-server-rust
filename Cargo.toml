@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "aw-client-rust",
     "aw-datastore",
     "aw-models",
     "aw-transform",
